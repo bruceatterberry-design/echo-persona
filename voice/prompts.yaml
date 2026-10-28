@@ -1,0 +1,121 @@
+# Voice studio prompts. Varied on purpose: different sounds, lengths, moods and speeds.
+# style: how to read it. Prompts with read: false are open questions, answered in The owner's own words.
+categories:
+  conversational:
+    style: Say it naturally, as if talking to a friend across the table.
+    prompts:
+      - "Well, I'll tell you, it's been one of those weeks where everything happens at once."
+      - "Come on in and sit down. Can I get you something to drink?"
+      - "I don't mind waiting. Take your time, there's no rush at all."
+      - "You know what? I think you're right about that."
+      - "Let me think about it for a second before I give you an answer."
+      - "That reminds me of something my father used to say."
+      - "I was just about to call you, actually."
+      - "Honestly, I wasn't expecting that, but I'm glad it worked out."
+      - "Give me a minute, I'm still finding my glasses."
+      - "It's good to hear your voice. How have you been keeping?"
+      - "We should do this more often. It's been far too long."
+      - "Hold on, say that again. I want to make sure I heard you right."
+  factual:
+    style: Explain it clearly and calmly, like you're teaching someone.
+    prompts:
+      - "Water boils at a lower temperature the higher up a mountain you go."
+      - "A computer only does exactly what it's told, which is both its strength and its weakness."
+      - "To change a tire, loosen the lug nuts first, then jack up the car."
+      - "The moon doesn't make its own light; it reflects light from the sun."
+      - "Most of the weight of a tree comes from carbon it pulls out of the air."
+      - "When you save a file, the computer writes it from memory onto the drive."
+      - "Thunder is the sound of air expanding very quickly around a lightning bolt."
+      - "A good budget starts with knowing exactly where every dollar goes."
+      - "Microphones turn tiny changes in air pressure into an electrical signal."
+      - "Bread rises because yeast produces gas that gets trapped in the dough."
+  storytelling:
+    style: Tell it like a story, with feeling and natural pauses.
+    prompts:
+      - "It was the middle of winter, and the truck wouldn't start no matter what we tried."
+      - "The first time I drove a car by myself, I was so nervous my hands were shaking."
+      - "We got completely lost that day, but it turned into one of the best trips we ever took."
+      - "There was an old man down the street who knew everybody's name, and everybody knew his."
+      - "I remember the smell of the kitchen on Sunday mornings, like coffee and bacon."
+      - "The storm knocked the power out, so we sat around with candles and told stories all night."
+      - "He looked me right in the eye and said, son, never give up on something you care about."
+      - "By the time we got to the top of the hill, the sun was just coming up over the trees."
+  questions:
+    style: Ask it like a real question, with curiosity.
+    prompts:
+      - "Have you ever wondered what you'd do if you could start over?"
+      - "What time did you say the game starts tonight?"
+      - "Are you sure that's the right road? It doesn't look familiar."
+      - "Did anybody remember to lock the back door?"
+      - "Would you rather have a quiet weekend at home or a trip somewhere new?"
+      - "Why does it always rain on the one day you plan something outside?"
+      - "How long has it been since we last talked?"
+      - "Who taught you to fish like that?"
+  calm:
+    style: Read slowly, softly and calmly, as if reassuring someone.
+    prompts:
+      - "It's all right. Take a deep breath. We'll figure this out together."
+      - "There's no need to worry about that tonight. Get some rest."
+      - "Whatever happens, I want you to know that I'm proud of you."
+      - "Some things take time, and that's perfectly okay."
+      - "Just listen to the rain for a minute. It's peaceful, isn't it?"
+      - "You did the best you could, and that's all anyone can ask."
+  enthusiastic:
+    style: Say it with real energy and excitement.
+    prompts:
+      - "Are you kidding me? That's fantastic news!"
+      - "Did you see that catch? That was unbelievable!"
+      - "We did it! After all that work, it actually runs!"
+      - "Oh, I love this song! Turn it up!"
+      - "That's the best thing I've eaten all year, no question about it."
+      - "You got the job? Congratulations, I knew you would!"
+  slow:
+    style: Read this one slowly and deliberately.
+    prompts:
+      - "Listen carefully, because this is important, and I only want to say it once."
+      - "The most valuable thing you can give someone is your time."
+      - "Measure twice, cut once. That rule has saved me more than once."
+      - "Every morning is another chance to get things right."
+  fast:
+    style: Read this one quickly, like you're in a bit of a hurry.
+    prompts:
+      - "Okay, grab your coat, grab the keys, we're already ten minutes late."
+      - "I need milk, eggs, bread, coffee, and whatever else is on the list by the door."
+      - "Quick, quick, turn on the TV, they're talking about it on the news right now."
+      - "Call me back when you get this, it's nothing bad, just give me a call."
+  short:
+    style: Say each one naturally. Short phrases matter too.
+    prompts:
+      - "Yes."
+      - "No, thank you."
+      - "Absolutely."
+      - "Good morning."
+      - "Hmm, maybe."
+      - "I'm sorry to hear that."
+      - "Thank you so much."
+      - "Goodnight, everybody."
+      - "Oh, really?"
+      - "Well, there you go."
+  long:
+    style: Read this longer passage naturally, taking breaths where they feel right.
+    prompts:
+      - "When I think back on all the years, it isn't the big moments I remember most. It's the ordinary ones: a cup of coffee on the porch, a phone call from someone I love, the sound of laughter coming from the next room."
+      - "If you're going to take on a project, do it properly. Read the instructions, lay out your tools, and don't be afraid to ask for help. There's no shame in learning something new, no matter how old you are."
+      - "Technology changes so fast these days that it's hard to keep up. But the important things don't really change. People still want to be heard, to be understood, and to know that somebody cares about them."
+      - "We drove for hours with the windows down, the radio playing old songs, and nobody saying much of anything. Sometimes the best conversations are the ones where you don't need to talk at all."
+  about_me:
+    style: Answer in your own words. Speak naturally for 30 seconds to 2 minutes.
+    read: false
+    prompts:
+      - "How would you explain something difficult to a beginner?"
+      - "How do you respond when someone disagrees with you?"
+      - "How do you show respect when discussing a sensitive topic?"
+      - "What makes a conversation enjoyable for you?"
+      - "How do you approach a technical problem you've never seen before?"
+      - "What interests would you like Echo to understand about you?"
+      - "What's an important life lesson you'd want to pass on?"
+      - "Tell me about a place that means a lot to you."
+      - "Describe a typical good day in your life."
+      - "Who has influenced you the most, and why?"
+      - "What do you want the people you love to remember about you?"
+      - "Tell me a funny story from your life."

@@ -1,0 +1,720 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo</title>
+<style>
+  :root {
+    --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+    --accent: #7fb8d6; --think: #c9a86a; --speak: #8fcfa8; --err: #d97b7b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif;
+         display: grid; grid-template-columns: minmax(320px, 1.1fr) minmax(320px, 1fr); height: 100vh; }
+  #stage { position: relative; display: grid; place-items: center; border-right: 1px solid var(--line);
+           background: radial-gradient(ellipse at 50% 40%, #101820 0%, var(--bg) 70%); }
+  canvas { width: min(80%, 520px); aspect-ratio: 1; }
+  canvas.photo { width: auto; height: min(78vh, 640px); max-width: 88%; aspect-ratio: 3 / 4; }
+  #state { position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%); font-size: 12px; letter-spacing: .18em;
+           text-transform: uppercase; color: var(--dim); display: flex; gap: 10px; align-items: center; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); transition: background .4s; }
+  #privacy { position: absolute; top: 18px; left: 20px; font-size: 12px; color: var(--dim); }
+  #privacy.on { color: var(--err); font-weight: 600; }
+  #micBtn.rec { background: var(--err); border-color: var(--err); color: #fff; }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; padding: 3px 6px; max-width: 150px; }
+  #health { position: absolute; top: 18px; right: 20px; font-size: 12px; color: var(--dim); }
+  #side { display: flex; flex-direction: column; min-height: 0; }
+  header { padding: 18px 22px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  label { font-size: 12px; color: var(--dim); display: flex; gap: 6px; align-items: center; cursor: pointer; }
+  #log { flex: 1; overflow-y: auto; padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+  .m { max-width: 85%; padding: 10px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); white-space: pre-wrap; }
+  .m.you { align-self: flex-end; background: #13202a; }
+  .m.err { border-color: var(--err); color: var(--err); }
+  .meta { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  form { display: flex; gap: 10px; padding: 16px 22px; border-top: 1px solid var(--line); }
+  input[type=text] { flex: 1; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 12px 14px; font: inherit; }
+  input[type=text]:focus { outline: 1px solid var(--accent); }
+  button { background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 10px; padding: 0 18px; font: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent); }
+  #mem { position: fixed; inset: 0 0 0 auto; width: min(440px, 100%); background: var(--panel); border-left: 1px solid var(--line);
+         transform: translateX(100%); transition: transform .25s; display: flex; flex-direction: column; z-index: 5; }
+  #mem.open { transform: none; }
+  #mem h2 { margin: 0; font-weight: 300; letter-spacing: .2em; font-size: 14px; }
+  #memList { flex: 1; overflow-y: auto; padding: 12px 22px; display: flex; flex-direction: column; gap: 10px; }
+  .mi { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .mi textarea { width: 100%; background: transparent; color: var(--text); border: 0; font: inherit; resize: vertical; }
+  .mi .row { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); gap: 8px; align-items: center; }
+  .mi button, .tools button { padding: 3px 10px; font-size: 12px; }
+  .mi button.del { border-color: var(--err); color: var(--err); }
+  .tools { display: flex; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .tools input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 10px; font: inherit; }
+  .hint { font-size: 12px; color: var(--dim); padding: 0 22px 12px; }
+  .m.note { align-self: center; font-size: 12px; color: var(--speak); background: transparent; border-style: dashed; }
+  @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; } #stage { border-right: 0; border-bottom: 1px solid var(--line); } }
+</style>
+</head>
+<body>
+<section id="stage" aria-label="Echo avatar">
+  <div id="privacy" title="No microphone or camera is in use">● Mic off · Camera off</div>
+  <div id="health">checking…</div>
+  <canvas id="face" width="720" height="720" aria-hidden="true"></canvas>
+  <div id="meter" title="Microphone level (line = trigger level)" style="position:absolute;bottom:62px;left:50%;transform:translateX(-50%);width:180px;height:6px;border:1px solid var(--line);border-radius:3px;display:none;overflow:hidden"><div id="meterBar" style="height:100%;width:0;background:var(--accent)"></div><div id="meterThr" style="position:absolute;top:0;bottom:0;width:2px;background:var(--think)"></div></div>
+  <label id="debugWrap" style="position:absolute;bottom:80px;left:50%;transform:translateX(-50%);display:none"><input type="checkbox" id="debugHear"> Show what I hear (testing)</label>
+  <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span></div>
+</section>
+<section id="side">
+  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Record my voice</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
+  <div id="log" aria-live="polite"></div>
+  <form id="f"><input type="text" id="q" placeholder="Talk to Echo…" autocomplete="off" aria-label="Message"><button type="button" id="micBtn" title="Click, or hold Space, to talk" aria-label="Talk">🎙</button><button>Send</button></form>
+</section>
+<aside id="mem" aria-label="What Echo remembers">
+  <header><h2>WHAT I REMEMBER</h2><button id="memClose" aria-label="Close">×</button></header>
+  <div class="hint">Only things you save are kept. Type "remember that …" in chat, or add one below. Edit text and press Save to correct it.</div>
+  <div id="memList"></div>
+  <div class="tools"><input id="memNew" placeholder="Add something to remember…" aria-label="New memory"><button id="memAdd">Add</button></div>
+  <div class="tools"><button id="memExport">Export</button><button id="memBackup">Back up</button><button id="clearConv" class="del">Clear conversation</button></div>
+</aside>
+<script>
+// ---------- placeholder avatar (replaced by the photoreal renderer in Milestone 7/8) ----------
+const c = document.getElementById('face'), g = c.getContext('2d');
+const S = { state: 'idle', expr: 'neutral', intensity: 0, mouth: 0, blink: 0, nextBlink: 2, gaze: [0,0], gazeT: [0,0] };
+const colors = { listening: '#d97b7b', idle: '#7fb8d6', thinking: '#c9a86a', speaking: '#8fcfa8', connecting: '#7c8894', error: '#d97b7b' };
+let t0 = performance.now();
+// ---------- the owner's face: pre-rendered frames (face/render_face.py), switched live ----------
+// Frames: expression x mouth shape (viseme) x eyes (0 open, 1 half, 2 closed).
+// The mouth shape comes from analysing the owner's voice as it plays (twin of face/viseme_tune.py);
+// blinks are scheduled; expressions cross-fade.
+const P = { ready: false, img: {}, meta: null, cur: 'neutral', prev: null, fadeStart: 0, holdUntil: 0, wasSpeaking: false,
+            vis: 'rest', visPrev: 'rest', visAt: 0, cand: 'rest', candN: 0, style: 'relaxed', jaw: 0, blinkAt: 0, nextBlink: 3000,
+            pose: 'C', posePrev: 'C', poseAt: 0, nextPose: 2500, poses: false,
+            clips: [], clip: null, motion: 0 };   // idle motion from the owner's own videos (0 = talking frames, 1 = their motion)
+async function loadMotion() {
+  try {
+    const meta = await (await fetch('/api/face/motion')).json();
+    for (const c of meta.clips || []) {
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = '/api/face/motion/' + c.file;
+      // alternate between the owner's clips each time one finishes (each clip already loops seamlessly in itself)
+      v.onended = () => { const i = P.clips.indexOf(v); P.clip = P.clips[(i + 1) % P.clips.length]; P.clip.currentTime = 0; P.clip.play().catch(() => {}); };
+      await new Promise(res => { v.oncanplaythrough = res; v.onerror = res; });
+      if (v.readyState >= 3) P.clips.push(v);
+    }
+    if (P.clips.length) { P.clip = P.clips[0]; P.clip.play().catch(() => {}); }
+  } catch { /* keep the preset head movement */ }
+}
+// Natural head movement: small turns, nods and tilts, chosen by what Echo is doing. Weights and timing per state.
+// [pose weights, min ms, max ms]. Talking uses only straight/left/right (those poses have every mouth shape).
+const HEAD = {
+  speaking:  [{ C: 5, L: 2.5, R: 2.5 }, 1400, 3000],
+  listening: [{ C: 3, D: 2.5, T: 2, L: 1, R: 1, U: 0.5 }, 1600, 3200],
+  idle:      [{ C: 4, L: 1.5, R: 1.5, U: 1, T: 1, D: 1 }, 3000, 6000],
+};
+const TALK_POSES = new Set(['C', 'L', 'R']);
+function nextHeadPose(now) {
+  const mode = S.state === 'speaking' ? 'speaking' : (S.state === 'listening' || S.state === 'thinking' || convo) ? 'listening' : 'idle';
+  const [weights, lo, hi] = HEAD[mode];
+  const opts = Object.entries(weights).filter(([p]) => p !== P.pose);       // always move somewhere new
+  let r = Math.random() * opts.reduce((a, [, w]) => a + w, 0), pick = 'C';
+  for (const [p, w] of opts) { if ((r -= w) <= 0) { pick = p; break; } }
+  P.posePrev = P.pose; P.pose = pick; P.poseAt = now;
+  // a nod is brief: come back to centre soon after
+  P.nextPose = now + (pick === 'D' ? 700 : lo + Math.random() * (hi - lo));
+}
+// Sound class → lip style, and how far the jaw tends to open for it (relaxed speech: the jaw does most of the work).
+const STYLE_OF = { aa: 'relaxed', ah: 'relaxed', fs: 'relaxed', eh: 'spread', ee: 'spread', oh: 'round', oo: 'round' };
+const JAW_OF = { aa: 1.0, ah: 0.8, eh: 0.75, oh: 0.8, ee: 0.5, oo: 0.5, fs: 0.3 };
+const VIS = { silence: 0.010, fricRatio: 0.9, nasalRatio: 0.93, f2Front: 1650, f1Close: 400, f2Back: 1050, f1Mid: 620, loud: 0.06 };
+async function loadFace() {   // true when finished (face loaded, or an atlas this window can't use); false = try again
+  try {
+    const meta = await (await fetch('/api/face/atlas')).json();
+    if (!meta.frames) return false;   // e.g. the external SSD isn't mounted yet at login
+    await Promise.all(Object.entries(meta.frames).map(([k, path]) => new Promise((res, rej) => {
+      const im = new Image(); im.onload = () => { P.img[k] = im; res(); }; im.onerror = rej;
+      im.src = '/api/face/atlas/frames/' + path.split('/').pop();
+    })));
+    if (!meta.visemes) return true;   // older atlas without mouth shapes
+    P.meta = meta; P.poses = !!meta.poses; P.ready = true;
+    c.width = 720; c.height = 960; c.classList.add('photo');
+    return true;
+  } catch { return false; }   // keep the simple drawing for now
+}
+function visemeNow() {
+  // Which mouth shape fits the sound playing right now: silence, hiss (s/f), hum (m/b/p), or a vowel
+  // placed by its first two resonances (F1 ≈ how open, F2 ≈ how front/spread vs back/rounded).
+  if (!V.an) return 'rest';
+  const n = V.an.fftSize, td = new Float32Array(n); V.an.getFloatTimeDomainData(td);
+  let a = 0; for (const x of td) a += x * x; const rms = Math.sqrt(a / n);
+  VIS.lastRms = rms;
+  if (rms < VIS.silence) return 'rest';
+  const db = new Float32Array(V.an.frequencyBinCount); V.an.getFloatFrequencyData(db);
+  const hz = V.ctx.sampleRate / n, band = (lo, hi) => { let e = 0; for (let i = Math.ceil(lo / hz); i < hi / hz && i < db.length; i++) e += 10 ** (db[i] / 10); return e; };
+  const low = band(80, 500), mid = band(500, 3500), high = band(3500, 10000);
+  if (high / (low + mid + 1e-12) > VIS.fricRatio) return 'fs';
+  if (low / (low + mid + high) > VIS.nasalRatio && rms < VIS.loud) return 'mbp';
+  const env = new Float32Array(db.length);   // ~330 Hz smoothing → formant envelope
+  for (let i = 3; i < db.length - 3; i++) { let t = 0; for (let j = -3; j <= 3; j++) t += db[i + j]; env[i] = t / 7; }
+  const peak = (lo, hi) => { let best = -1e9, at = lo; for (let i = Math.ceil(lo / hz); i < hi / hz; i++) if (env[i] > best) { best = env[i]; at = i * hz; } return at; };
+  const f1 = peak(250, 900), f2 = peak(Math.max(950, f1 + 350), 2400);
+  if (f2 > VIS.f2Front) return f1 < VIS.f1Close ? 'ee' : 'eh';
+  if (f2 < VIS.f2Back && f1 < VIS.f1Close + 30) return 'oo';
+  if (f2 < VIS.f2Back + 100 && f1 < VIS.f1Mid) return 'oh';
+  return rms > VIS.loud ? 'aa' : 'ah';
+}
+const FAKE_SPEECH = ['ah', 'eh', 'mbp', 'oh', 'ee', 'aa', 'fs', 'oo', 'ah', 'rest'];
+function drawPhoto(now) {
+  const W = c.width, H = c.height, t = now / 1000;
+  // mouth: sound class from the owner's voice as it plays (or a speech-like sequence for the stand-in voice)
+  let cls = 'rest', rms = 0;
+  if (S.state === 'speaking') {
+    if (ownSpeaking) { cls = visemeNow(); rms = VIS.lastRms || 0; }
+    else { cls = FAKE_SPEECH[Math.floor(t * 9) % FAKE_SPEECH.length]; rms = 0.03 + 0.05 * Math.abs(Math.sin(t * 7)); }
+  }
+  // lip style changes only when the new style shows up 2 frames running (no flicker)
+  const style = STYLE_OF[cls];
+  if (style) { if (style === P.cand) P.candN++; else { P.cand = style; P.candN = 1; } if (P.candN >= 2) P.style = style; }
+  // jaw follows loudness × how open that sound is, smoothed like a real jaw (opens quickly, closes a bit slower)
+  const jawTarget = style ? Math.min(1, Math.max(0.15, (rms - VIS.silence) / 0.09)) * JAW_OF[cls] : 0;
+  P.jaw += (jawTarget - P.jaw) * (jawTarget > P.jaw ? 0.5 : 0.3);
+  const level = P.jaw < 0.08 ? 0 : Math.min(4, Math.ceil(P.jaw * 4));
+  const want = level ? P.style + level : (cls === 'mbp' ? 'mbp' : 'rest');
+  if (want !== P.vis && now - P.visAt > 35) { P.visPrev = P.vis; P.vis = want; P.visAt = now; }
+  const visFade = Math.min(1, (now - P.visAt) / 45);
+  // blinks: open → half → closed → half → open over ~200 ms
+  if (now > P.nextBlink) { P.blinkAt = now; P.nextBlink = now + 2500 + Math.random() * 4000; }
+  const bt = now - P.blinkAt, e = bt < 50 ? 1 : bt < 130 ? 2 : bt < 190 ? 1 : 0;
+  // expression: hold the reply's expression while speaking and 4 s after, then ease back to neutral
+  const speaking = S.state === 'speaking';
+  if (P.wasSpeaking && !speaking) P.holdUntil = now + 4000;
+  P.wasSpeaking = speaking;
+  const wantExpr = (speaking || now < P.holdUntil) && P.meta.expressions.includes(S.expr) ? S.expr : 'neutral';
+  if (wantExpr !== P.cur) { P.prev = P.cur; P.cur = wantExpr; P.fadeStart = now; }
+  const fade = Math.min(1, (now - P.fadeStart) / 350);
+  // draw: head-and-shoulders crop, gentle breathing motion
+  g.clearRect(0, 0, W, H);
+  g.save();
+  const k = 1 + 0.004 * Math.sin(t * 0.9);
+  g.translate(W / 2, H / 2 + Math.sin(t * 0.9) * 2); g.scale(k, k); g.translate(-W / 2, -H / 2);
+  // the owner's own motion while idle/listening; talking frames (with lip shapes) while speaking and while an expression is held
+  const idle = !!P.clip && !speaking && now > P.holdUntil && P.cur === 'neutral';
+  P.motion += ((idle ? 1 : 0) - P.motion) * 0.12;                    // ~0.4 s blend either way
+  if (P.clip && idle && P.clip.paused) P.clip.play().catch(() => {});
+  if (P.motion > 0.5) { P.pose = P.posePrev = 'C'; P.nextPose = now + 1500; }   // talking starts from straight ahead
+  // head pose: pick a new one when it's time; while talking only use poses that have every mouth shape
+  if (P.poses && P.motion < 0.5) {
+    if (now > P.nextPose || (speaking && !TALK_POSES.has(P.pose))) nextHeadPose(now);
+  }
+  const pf = P.poses ? Math.min(1, (now - P.poseAt) / 550) : 1, poseFade = pf * pf * (3 - 2 * pf);   // eased
+  const src = (pose, ex, v) => {
+    if (!P.poses) return P.img[`${ex}/${v}/${e}`] || P.img[`${ex}/${v}/0`] || P.img['neutral/rest/0'];
+    return P.img[`${pose}/${ex}/${v}/${e}`] || P.img[`${pose}/${ex}/${v}/0`] || P.img[`${pose}/${ex}/rest/${e}`]
+        || P.img[`${pose}/${ex}/rest/0`] || P.img[`C/${ex}/${v}/${e}`] || P.img['C/neutral/rest/0'];
+  };
+  const put = (im, alpha) => { g.globalAlpha = alpha;
+    if (P.meta.cropped) g.drawImage(im, 0, 0, W, H); else g.drawImage(im, 80, 0, 800, 1066, 0, 0, W, H); };
+  // one face = expression cross-fade, then a very short blend between mouth shapes on top
+  const face = (pose, a) => {
+    if (P.prev && fade < 1) put(src(pose, P.prev, P.vis), a);
+    put(src(pose, P.cur, P.visPrev), a * (P.prev && fade < 1 ? fade : 1));
+    if (visFade < 1 || P.visPrev !== P.vis) put(src(pose, P.cur, P.vis), a * visFade);
+  };
+  // head turns blend from the previous pose into the new one
+  if (P.motion < 0.99) {
+    if (poseFade < 1 && P.posePrev !== P.pose) { face(P.posePrev, 1); face(P.pose, poseFade); }
+    else face(P.pose, 1);
+  }
+  if (P.clip && P.motion > 0.01 && P.clip.readyState >= 2) { g.globalAlpha = P.motion; g.drawImage(P.clip, 0, 0, W, H); }
+  g.restore(); g.globalAlpha = 1;
+  // soft fade into the background at the edges
+  g.save(); g.globalCompositeOperation = 'destination-in';
+  const grad = g.createRadialGradient(W / 2, H * 0.42, W * 0.32, W / 2, H * 0.5, W * 0.78);
+  grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, W, H); g.restore();
+  // restrained status glow
+  const col = colors[S.state] || colors.idle, pulse = S.state === 'thinking' ? 0.5 + 0.5 * Math.sin(t * 3) : 0.6;
+  g.save(); g.globalCompositeOperation = 'destination-over';
+  const glow = g.createRadialGradient(W / 2, H * 0.45, W * 0.35, W / 2, H * 0.45, W * 0.75);
+  glow.addColorStop(0, 'rgba(0,0,0,0)'); glow.addColorStop(1, col + Math.round(40 * pulse).toString(16).padStart(2, '0'));
+  g.fillStyle = glow; g.fillRect(0, 0, W, H); g.restore();
+}
+function draw(now) {
+  if (P.ready) { drawPhoto(now); requestAnimationFrame(draw); return; }
+  const t = (now - t0) / 1000, W = 720, cx = W/2, cy = W/2 - 10;
+  g.clearRect(0, 0, W, W);
+  if (t > S.nextBlink) { S.blink = 1; S.nextBlink = t + 2.5 + Math.random()*4; }
+  S.blink = Math.max(0, S.blink - 0.12);
+  if (Math.random() < 0.006) S.gazeT = [(Math.random()-.5)*10, (Math.random()-.5)*5];
+  S.gaze = S.gaze.map((v,i) => v + (S.gazeT[i]-v)*0.05);
+  const target = S.state === 'speaking' ? 0.35 + 0.35*Math.abs(Math.sin(t*11)*Math.sin(t*4.3)) : 0;
+  S.mouth += (target - S.mouth) * 0.3;
+  const bob = Math.sin(t*0.7)*4, sway = Math.sin(t*0.45)*3;
+  const col = colors[S.state] || colors.idle;
+  g.save(); g.translate(cx + sway, cy + bob);
+  // halo
+  const pulse = S.state === 'thinking' ? 0.5 + 0.5*Math.sin(t*3) : 0.3;
+  g.strokeStyle = col; g.globalAlpha = 0.15 + 0.2*pulse; g.lineWidth = 2;
+  g.beginPath(); g.arc(0, 0, 250, 0, Math.PI*2); g.stroke(); g.globalAlpha = 1;
+  // head + shoulders silhouette
+  g.strokeStyle = col; g.lineWidth = 2.2; g.globalAlpha = 0.75;
+  g.beginPath(); g.ellipse(0, -30, 120, 155, 0, 0, Math.PI*2); g.stroke();
+  g.beginPath(); g.moveTo(-210, 250); g.quadraticCurveTo(-170, 140, -60, 120); g.moveTo(210, 250); g.quadraticCurveTo(170, 140, 60, 120); g.stroke();
+  // brows react to expression
+  const e = S.expr, k = S.intensity;
+  const browLift = e === 'concerned' ? -8*k : e === 'thoughtful' ? 4*k : 0, browTilt = e === 'concerned' ? 10*k : 0;
+  g.beginPath(); g.moveTo(-75, -78 + browLift - browTilt); g.lineTo(-25, -82 + browLift + browTilt);
+  g.moveTo(25, -82 + browLift + browTilt); g.lineTo(75, -78 + browLift - browTilt); g.stroke();
+  // eyes
+  g.globalAlpha = 1; g.fillStyle = col;
+  const eh = 9 * (1 - S.blink);
+  for (const x of [-50, 50]) { g.beginPath(); g.ellipse(x + S.gaze[0], -50 + S.gaze[1], 11, Math.max(eh, 0.8), 0, 0, Math.PI*2); g.fill(); }
+  // mouth
+  const smile = (e === 'smiling' ? 18 : e === 'concerned' ? -6 : 3) * (0.4 + k);
+  g.globalAlpha = 0.85; g.beginPath(); g.moveTo(-40, 55); g.quadraticCurveTo(0, 55 + smile + S.mouth*40, 40, 55);
+  if (S.mouth > 0.02) g.quadraticCurveTo(0, 55 + smile - S.mouth*8, -40, 55);
+  g.stroke(); g.restore();
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+(async () => {   // keep trying (5 s, 10 s … then every 30 s): one failed load used to leave the simple drawing for good
+  for (let i = 1; !(await loadFace()); i++) await new Promise(r => setTimeout(r, Math.min(5000 * i, 30000)));
+  loadMotion();
+})();
+
+// ---------- state + chat ----------
+const $ = id => document.getElementById(id);
+function setState(s) { S.state = s; $('stateText').textContent = s; $('dot').style.background = colors[s] || colors.idle; }
+function add(text, cls, meta) {
+  const d = document.createElement('div'); d.className = 'm ' + (cls||''); d.textContent = text;
+  if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
+  $('log').appendChild(d); $('log').scrollTop = 1e9;
+}
+const OWN = '__own__';
+let speakGen = 0, ownSpeaking = false, ownAudio = null;
+const ttsCache = new Map();   // short phrases like "Yes?" are reused instantly
+function stopSpeaking() {
+  speakGen++; speechSynthesis.cancel(); voiceStop();
+  if (ownAudio) { ownAudio.pause(); ownAudio = null; }
+  if (ownSpeaking) { ownSpeaking = false; setState('idle'); }
+}
+function fetchVoice(sentence) {
+  if (ttsCache.has(sentence)) return Promise.resolve(ttsCache.get(sentence));
+  return fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: sentence }) })
+    .then(r => { if (!r.ok) throw new Error('voice service'); return r.blob(); })
+    .then(b => { if (sentence.length < 20) ttsCache.set(sentence, b); return b; });
+}
+// Split into sentences, then split long sentences at natural pauses, so the first sound comes sooner.
+function speechChunks(text) {
+  const out = [];
+  for (const sent of (text.match(/[^.!?…]+[.!?…]+["')\]]*|[^.!?…]+$/g) || [text]).map(x => x.trim()).filter(Boolean)) {
+    if (sent.length <= 70) { out.push(sent); continue; }
+    let cur = '';
+    for (const part of sent.split(/(?<=[,;:—–])\s+/)) {
+      if (cur && (cur + ' ' + part).length > 70 && cur.length >= 20) { out.push(cur); cur = part; }
+      else cur = cur ? cur + ' ' + part : part;
+    }
+    if (cur) out.push(cur);
+  }
+  return out;
+}
+async function speakOwn(text) {
+  const gen = ++speakGen;
+  const sentences = speechChunks(text);
+  ownSpeaking = true; setState('speaking'); speakStarted = performance.now();
+  try {
+    let next = fetchVoice(sentences[0]);
+    for (let i = 0; i < sentences.length; i++) {
+      const blob = await next;
+      if (gen !== speakGen) return;
+      if (i + 1 < sentences.length) next = fetchVoice(sentences[i + 1]);   // prepare the next sentence while this one plays
+      await new Promise(res => {
+        ownAudio = new Audio(URL.createObjectURL(blob));
+        ownAudio.onended = ownAudio.onerror = res; ownAudio.play().catch(res);
+      });
+      if (gen !== speakGen) return;
+    }
+  } catch (e) {
+    if (gen !== speakGen) return;
+    add('My own voice isn’t available right now, so I’m using the stand-in voice.', 'note');
+    ownSpeaking = false; speakSystem(text); return;
+  }
+  if (gen === speakGen) { ownSpeaking = false; ownAudio = null; setState('idle'); }
+}
+// ---------- streaming voice: speak while the reply is still being written ----------
+// Text arrives in pieces (deltas). Complete phrases are sent one at a time to the voice service, whose audio
+// streams back as raw PCM and is scheduled back-to-back on one AudioContext, so there are no gaps.
+const V = { gen: 0, pending: '', queue: [], ended: false, pumping: false, ctx: null, nextTime: 0, abort: null, full: '', chunks: 0, failed: false };
+const useOwn = () => $('speak').checked && $('voice').value === OWN;
+function voiceStop() {
+  V.gen++; V.pending = ''; V.queue = []; V.ended = false; V.full = ''; V.chunks = 0; V.failed = false;
+  if (V.abort) { V.abort.abort(); V.abort = null; }
+  if (V.ctx) { V.ctx.close(); V.ctx = null; V.an = null; }
+}
+function voiceBegin() {
+  stopSpeaking();
+  ownSpeaking = true; setState('speaking'); speakStarted = performance.now();  // keeps the mic closed from now on
+}
+function takeChunks(final) {
+  // A phrase is ready at a sentence end, or at a pause (, ; :) once it is long enough. The first one is kept short.
+  const out = [];
+  for (;;) {
+    const min = V.chunks + out.length === 0 ? 18 : 40;
+    const sent = V.pending.match(/^[\s\S]*?[.!?…]+["')\]]*(?=\s)/);
+    let cut = sent ? sent[0].length : -1;
+    if (cut < 0 && V.pending.length >= min) {
+      const re = /[,;:—–](?=\s)/g; let m;
+      while ((m = re.exec(V.pending))) if (m.index + 1 >= min) { cut = m.index + 1; break; }
+    }
+    if (cut < 0) break;
+    const c = V.pending.slice(0, cut).trim(); V.pending = V.pending.slice(cut);
+    if (c) out.push(c);
+  }
+  V.chunks += out.length;
+  if (final && V.pending.trim()) { out.push(V.pending.trim()); V.pending = ''; V.chunks++; }
+  return out;
+}
+function voiceFeed(delta, final = false) {
+  V.full += delta; V.pending += delta;
+  for (const c of takeChunks(final)) V.queue.push(c);
+  if (final) V.ended = true;
+  voicePump();
+}
+async function voicePump() {
+  if (V.pumping) return;
+  V.pumping = true; const gen = V.gen;
+  try {
+    while (V.queue.length && gen === V.gen) await voicePlay(V.queue.shift(), gen);
+  } catch (e) {
+    if (gen === V.gen && !V.failed) {   // voice service trouble: say the rest with the stand-in voice
+      V.failed = true; add('My own voice isn’t available right now, so I’m using the stand-in voice.', 'note');
+      const rest = V.full; const ended = V.ended; voiceStop(); ownSpeaking = false;
+      if (ended) speakSystem(rest); else V.failed = 'pending-system';
+    }
+  } finally { V.pumping = false; }
+  if (gen !== V.gen) return;
+  if (V.queue.length) return voicePump();
+  if (V.ended) {  // everything scheduled: go idle when the last sound finishes
+    const left = V.ctx ? Math.max(0, V.nextTime - V.ctx.currentTime) : 0;
+    setTimeout(() => { if (gen === V.gen) { ownSpeaking = false; setState('idle'); } }, left * 1000 + 150);
+  }
+}
+async function voicePlay(text, gen) {
+  if (!V.ctx) {
+    V.ctx = new AudioContext(); V.nextTime = 0;
+    V.an = V.ctx.createAnalyser(); V.an.fftSize = 1024; V.an.smoothingTimeConstant = 0;  // drives the mouth shapes
+    V.an.connect(V.ctx.destination);
+    if (V.ctx.state === 'suspended') await V.ctx.resume().catch(() => {});
+    if (V.ctx.state !== 'running') throw new Error('audio blocked');
+  }
+  V.abort = new AbortController();
+  const r = await fetch('/api/tts/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ text }), signal: V.abort.signal });
+  if (!r.ok) throw new Error('voice service');
+  const rate = +r.headers.get('X-Sample-Rate') || 24000, reader = r.body.getReader();
+  let carry = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done || gen !== V.gen) break;
+    let bytes = value;
+    if (carry) { bytes = new Uint8Array(carry.length + value.length); bytes.set(carry); bytes.set(value, carry.length); carry = null; }
+    if (bytes.length % 2) { carry = bytes.slice(-1); bytes = bytes.slice(0, -1); }
+    if (!bytes.length) continue;
+    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2), f = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
+    const buf = V.ctx.createBuffer(1, f.length, rate); buf.copyToChannel(f, 0);
+    const src = V.ctx.createBufferSource(); src.buffer = buf; src.connect(V.an);
+    const at = Math.max(V.nextTime, V.ctx.currentTime + 0.06); src.start(at); V.nextTime = at + buf.duration;
+  }
+}
+function speak(text) {
+  if (!$('speak').checked) { setState('idle'); return; }
+  stopSpeaking();
+  if ($('voice').value === OWN) return speakOwn(text);
+  speakSystem(text);
+}
+function speakSystem(text) {
+  if (!('speechSynthesis' in window)) { setState('idle'); return; }
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text); currentUtt = u;
+  const v = speechSynthesis.getVoices().find(v => v.name === $('voice').value); if (v) u.voice = v;
+  // Mark "speaking" immediately (not on onstart) so the mic never re-opens in the gap before it talks.
+  setState('speaking'); speakStarted = performance.now();
+  u.onend = u.onerror = () => { if (currentUtt === u) { currentUtt = null; setState('idle'); } };
+  speechSynthesis.speak(u);
+}
+let currentUtt = null, speakStarted = 0;
+// Safety net: some browsers occasionally never fire onend; don't stay stuck in "speaking".
+setInterval(() => {
+  if (S.state === 'speaking' && !ownSpeaking && !speechSynthesis.speaking && !speechSynthesis.pending && performance.now() - speakStarted > 1500) {
+    currentUtt = null; setState('idle');
+  }
+}, 500);
+let ws, live = null;  // live = the reply bubble being written
+function connect() {
+  setState('connecting');
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => setState('idle');
+  ws.onclose = () => { setState('connecting'); setTimeout(connect, 1500); };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === 'state' && !(m.state === 'idle' && S.state === 'speaking')) setState(m.state);
+    if (m.type === 'delta') {
+      if (!live) { live = document.createElement('div'); live.className = 'm'; $('log').appendChild(live); if (useOwn()) voiceBegin(); }
+      live.textContent += m.text; $('log').scrollTop = 1e9;
+      S.expr = m.expression; S.intensity = m.expression === 'neutral' ? 0 : 0.3;
+      if (useOwn() && !V.failed) voiceFeed(m.text);
+    }
+    if (m.type === 'reply') {
+      S.expr = m.expression; S.intensity = m.intensity;
+      if (live) { live.textContent = m.text; const t = document.createElement('div'); t.className = 'meta'; t.textContent = m.expression; live.appendChild(t); }
+      else add(m.text, '', m.expression);
+      if (live && useOwn() && V.failed !== true) {
+        if (V.failed === 'pending-system') { V.failed = true; speakSystem(V.full); } else voiceFeed('', true);
+      } else speak(m.text);
+      live = null;
+    }
+    if (m.type === 'error') { add(m.message, 'err'); }
+    if (m.type === 'stand_down') { standDown(); return; }
+    if (m.type === 'history') { $('log').innerHTML = ''; m.turns.forEach(t => add(t.content, t.role === 'user' ? 'you' : '')); }
+    if (m.type === 'memory_saved') { add('Remembered: ' + m.memory.content, 'note'); loadMem(); }
+  };
+}
+connect();
+$('f').onsubmit = e => {
+  e.preventDefault(); const q = $('q').value.trim(); if (!q || ws.readyState !== 1) return;
+  stopSpeaking(); // barge-in: typing interrupts speech
+  add(q, 'you'); ws.send(JSON.stringify({ text: q })); $('q').value = '';
+};
+async function health() {
+  try { const h = await (await fetch('/health')).json();
+    $('health').textContent = h.llm.ok ? `● ${h.llm.model || h.llm.backend}` : '● LLM offline';
+    $('health').style.color = h.llm.ok ? 'var(--speak)' : 'var(--err)';
+  } catch { $('health').textContent = '● core offline'; $('health').style.color = 'var(--err)'; }
+}
+health(); setInterval(health, 10000);
+
+// ---------- memory panel ----------
+const api = (path, opts = {}) => fetch('/api/' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+async function loadMem() {
+  const items = await (await api('memory')).json(), L = $('memList'); L.innerHTML = '';
+  if (!items.length) L.innerHTML = '<div class="hint">Nothing saved yet.</div>';
+  for (const it of items) {
+    const d = document.createElement('div'); d.className = 'mi';
+    const ta = document.createElement('textarea'); ta.value = it.content; ta.rows = 2; ta.setAttribute('aria-label', 'Memory text');
+    const row = document.createElement('div'); row.className = 'row';
+    const info = document.createElement('span'); info.textContent = `${it.kind} · ${it.status} · ${new Date(it.updated*1000).toLocaleDateString()}`;
+    const save = document.createElement('button'); save.textContent = 'Save';
+    save.onclick = async () => { await api('memory/' + it.id, { method: 'PATCH', body: JSON.stringify({ content: ta.value }) }); loadMem(); };
+    const del = document.createElement('button'); del.textContent = 'Forget'; del.className = 'del';
+    del.onclick = async () => { if (confirm('Forget this permanently?\n\n' + it.content)) { await api('memory/' + it.id, { method: 'DELETE' }); loadMem(); } };
+    const btns = document.createElement('span'); btns.append(save, ' ', del);
+    row.append(info, btns); d.append(ta, row); L.appendChild(d);
+  }
+}
+$('memBtn').onclick = () => { $('mem').classList.add('open'); loadMem(); };
+$('memClose').onclick = () => $('mem').classList.remove('open');
+$('memAdd').onclick = async () => { const v = $('memNew').value.trim(); if (!v) return;
+  await api('memory', { method: 'POST', body: JSON.stringify({ content: v }) }); $('memNew').value = ''; loadMem(); };
+$('memExport').onclick = async () => { const t = await (await api('memory/export')).text();
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'application/json' })); a.download = 'echo-memories.json'; a.click(); };
+$('memBackup').onclick = async () => { const r = await (await api('memory/backup', { method: 'POST' })).json(); alert('Backup saved:\n' + r.backup); };
+$('clearConv').onclick = async () => { if (confirm('Clear the conversation history? Saved memories are kept.')) { await api('turns', { method: 'DELETE' }); $('log').innerHTML = ''; } };
+document.addEventListener('keydown', e => { if (e.key === 'Escape') $('mem').classList.remove('open'); });
+$('q').focus();
+
+// ---------- voice picker ----------
+let voicesLoaded = false;
+function loadVoices() {
+  const current = $('voice').value;
+  const vs = speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
+  if (!vs.length) return;
+  const sel = $('voice'), saved = (() => { try { return localStorage.getItem('voice'); } catch { return null; } })();
+  sel.innerHTML = '';
+  const bo = document.createElement('option'); bo.value = OWN; bo.textContent = 'My voice'; sel.appendChild(bo);
+  for (const v of vs) {
+    const o = document.createElement('option'); o.value = v.name; o.textContent = v.name; sel.appendChild(o);
+  }
+  // Every time Echo opens it uses the owner's own voice. A choice made during a session is kept if the list reloads.
+  sel.value = voicesLoaded && current && [...sel.options].some(o => o.value === current) ? current : OWN;
+  voicesLoaded = true;
+}
+if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+$('voice').onchange = () => { try { localStorage.setItem('voice', $('voice').value); } catch {} };
+setTimeout(() => { if ($('voice').value === OWN) fetchVoice('Yes?').catch(() => {}); }, 3000);  // so "Yes?" is instant
+
+// ---------- voice: microphone ----------
+// Modes: ptt (Space / button), handsfree (every utterance goes to Echo),
+// wake (every utterance is transcribed locally; only ones containing "Hey Echo" are acted on,
+//       everything else is discarded unseen).
+// Audio is captured as raw PCM on the audio thread with a 0.6 s pre-roll, so the start of
+// "Hey Echo" is never clipped, and sent as WAV.
+let stream = null, audioCtx = null, proc = null, rate = 48000;
+let recording = false, recMode = 'direct', recStarted = 0, recBuf = [], preroll = [], prerollLen = 0;
+let awakeUntil = 0;       // follow-up window: utterances before this time need no wake word
+let convo = false, convoEnding = false;  // in a conversation started by "Hey Echo"
+const PREROLL_S = 0.6;
+const mode = () => $('listen').value;
+function setMicIndicator() {
+  const on = !!stream;
+  $('privacy').textContent = !on ? '● Mic off · Camera off'
+    : mode() !== 'wake' ? '● MIC ON · Camera off'
+    : convo ? '● MIC ON · in conversation (say “that’s all” to end)' : '● MIC ON · waiting for “Hey Echo”';
+  $('privacy').classList.toggle('on', on);
+  $('meter').style.display = on ? 'block' : 'none';
+  $('debugWrap').style.display = on && mode() === 'wake' ? 'flex' : 'none';
+}
+async function openMic() {
+  if (stream) return true;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch { add('I can’t reach the microphone. Allow microphone access for this page in your browser.', 'err'); return false; }
+  audioCtx = new AudioContext(); rate = audioCtx.sampleRate;
+  const src = audioCtx.createMediaStreamSource(stream), mute = audioCtx.createGain(); mute.gain.value = 0;
+  // ScriptProcessor runs on the audio clock, so detection keeps working when this tab is in the background.
+  proc = audioCtx.createScriptProcessor(2048, 1, 1);
+  proc.onaudioprocess = e => {
+    const b = new Float32Array(e.inputBuffer.getChannelData(0));
+    if (recording) recBuf.push(b);
+    else { preroll.push(b); prerollLen += b.length; while (prerollLen - preroll[0].length > PREROLL_S * rate) prerollLen -= preroll.shift().length; }
+    let a = 0; for (const x of b) a += x*x; vadStep(Math.sqrt(a / b.length));
+  };
+  src.connect(proc); proc.connect(mute); mute.connect(audioCtx.destination);
+  setMicIndicator(); return true;
+}
+function closeMic() {
+  if (recording) return;
+  stream && stream.getTracks().forEach(t => t.stop()); audioCtx && audioCtx.close();
+  stream = null; audioCtx = null; proc = null; preroll = []; prerollLen = 0; setMicIndicator();
+}
+function toWav(chunks) {
+  const n = chunks.reduce((a, c) => a + c.length, 0), buf = new ArrayBuffer(44 + n*2), v = new DataView(buf);
+  const w = (o, str) => [...str].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n*2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate*2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n*2, true);
+  let o = 44; for (const c of chunks) for (const x of c) { v.setInt16(o, Math.max(-1, Math.min(1, x)) * 32767, true); o += 2; }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function startRec(m = 'direct') {
+  if (recording) return;
+  if (m === 'direct') stopSpeaking();   // barge-in: talking interrupts Echo
+  if (!(await openMic())) return;
+  recBuf = preroll.slice(); preroll = []; prerollLen = 0;
+  recMode = m; recStarted = performance.now(); recording = true;
+  if (m !== 'wake') { $('micBtn').classList.add('rec'); setState('listening'); }
+}
+function stopRec() {
+  if (!recording) return;
+  recording = false; $('micBtn').classList.remove('rec');
+  const chunks = recBuf; recBuf = [];
+  sendAudio(chunks, recMode);
+}
+async function sendAudio(chunks, m) {
+  if (mode() === 'ptt') closeMic();
+  const samples = chunks.reduce((a, c) => a + c.length, 0);
+  if (samples < rate * 0.3) { if (m !== 'wake') setState('idle'); return; }
+  if (m !== 'wake') setState('thinking');
+  const debug = m === 'wake' && $('debugHear').checked;
+  try {
+    const apiMode = m === 'wake' ? 'wake' : (m === 'convo' ? 'conversation' : 'direct');
+    const r = await fetch(`/api/stt?mode=${apiMode}${debug ? '&debug=1' : ''}`, { method: 'POST', body: toWav(chunks) });
+    const j = await r.json(); if (!r.ok) throw new Error(j.detail);
+    let text = '';
+    if (m === 'wake') {
+      if (debug) add(`heard: “${j.heard || '(nothing)'}” → ${j.wake ? 'WAKE' : 'ignored'}`, 'note');
+      if (!j.wake) return;                         // not for Echo: discard silently
+      startConvo();
+      text = (j.command || '').trim();
+      if (!text) { add('Yes? (listening)', 'note'); speak('Yes?'); return; }   // bare "Hey Echo"
+    } else {
+      text = (j.text || '').trim();
+      if (m === 'convo' && debug) add(`heard: “${text || '(nothing)'}”${j.end ? ' → ending conversation' : ''}`, 'note');
+      if (m === 'convo' && j.end) convoEnding = true;   // let it say goodbye, then stop
+    }
+    if (!text) { if (m !== 'wake') setState('idle'); return; }
+    add(text, 'you', 'spoken'); setState('thinking'); ws.send(JSON.stringify({ text }));
+  } catch (e) { if (m !== 'wake') { add('I couldn’t make out that recording.', 'err'); setState('idle'); } }
+}
+$('micBtn').onclick = () => recording ? stopRec() : startRec('direct');
+const typing = () => ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+document.addEventListener('keydown', e => { if (e.code === 'Space' && !e.repeat && !typing()) { e.preventDefault(); startRec('direct'); } });
+document.addEventListener('keyup', e => { if (e.code === 'Space' && !typing()) stopRec(); });
+
+// Voice activity detection with an adaptive noise floor. Half-duplex: it doesn't listen while
+// Echo is thinking or speaking, so it doesn't hear itself from the speakers.
+const VAD = { minStart: 0.015, startX: 3.0, stopX: 1.8, minMs: 120, silenceMs: 750, maxMs: 20000,
+              followMs: 20000,   // conversation ends after this long with nothing said
+              holdoffMs: 450 };  // after Echo stops talking, wait for room echo to die down
+let noise = 0.005, loudSince = 0, quietSince = 0, lastState = 'idle', meterT = 0, idleSince = 0;
+function startConvo() { convo = true; convoEnding = false; awakeUntil = 0; setMicIndicator(); }
+function endConvo(why) {
+  if (!convo) return;
+  convo = false; convoEnding = false; awakeUntil = 0; setMicIndicator();
+  add(why + ' Say “Hey Echo” when you want me.', 'note');
+}
+function vadStep(L) {
+  const now = performance.now(), m = mode();
+  const start = Math.max(VAD.minStart, noise * VAD.startX), stop = Math.max(VAD.minStart * 0.6, noise * VAD.stopX);
+  if (now - meterT > 60) {  // meter: level vs trigger line (log scale)
+    meterT = now; const pos = x => Math.min(100, Math.max(0, (Math.log10(x + 1e-5) + 3) / 3 * 100));
+    $('meterBar').style.width = pos(L) + '%'; $('meterThr').style.left = pos(start) + '%';
+    $('meterBar').style.background = recording ? 'var(--err)' : 'var(--accent)';
+  }
+  if (S.state === 'idle' && lastState !== 'idle') idleSince = now;
+  lastState = S.state;
+  if (convo && S.state === 'idle' && !recording) {
+    if (convoEnding) endConvo('Conversation ended.');
+    else if (!awakeUntil) awakeUntil = now + VAD.followMs;             // (re)start the follow-up window
+    else if (now > awakeUntil) endConvo('I’ll stop listening for now.');
+  }
+  if (!recording && L < start) noise += (L - noise) * (L < noise ? 0.05 : 0.01);  // learn the room's background level
+  if (m === 'ptt') return;
+  if (!recording) {
+    if (S.state !== 'idle' || now - idleSince < VAD.holdoffMs) { loudSince = 0; return; }
+    if (L > start) {
+      loudSince ||= now;
+      if (now - loudSince > VAD.minMs) {
+        quietSince = 0;
+        startRec(m === 'handsfree' ? 'direct' : convo ? 'convo' : 'wake');
+        awakeUntil = 0;   // re-armed after its reply
+      }
+    } else loudSince = 0;
+  } else {
+    if (L < stop) { quietSince ||= now; if (now - quietSince > VAD.silenceMs) { stopRec(); loudSince = 0; } } else quietSince = 0;
+    if (now - recStarted > VAD.maxMs) stopRec();
+  }
+}
+$('listen').onchange = async () => {
+  try { localStorage.setItem('listen', mode()); } catch {}
+  awakeUntil = 0; convo = false;
+  if (mode() === 'ptt') { if (recording) stopRec(); closeMic(); return; }
+  if (!(await openMic())) { $('listen').value = 'ptt'; return; }
+  setMicIndicator();
+};
+// Only one Echo window may use the microphone: a newer one (any browser) tells older ones to stand down.
+function standDown() {
+  if (recording) { recording = false; recBuf = []; }
+  convo = false; stopSpeaking(); closeMic(); $('listen').value = 'ptt';
+  document.body.innerHTML = '<p style="margin:auto;color:#7c8894;font:15px system-ui">Echo is open in another window. You can close this one.</p>';
+  ws && ws.close(); ws = { send() {}, readyState: 3 }; connect = () => {};
+}
+try {
+  const bc = new BroadcastChannel('echo');
+  let modeBeforeStudio = null;
+  bc.onmessage = e => {
+    if (e.data === 'new-tab') return standDown();
+    if (e.data === 'studio-open' && mode() !== 'ptt') {      // studio needs the mic: pause listening
+      modeBeforeStudio = mode(); if (recording) { recording = false; recBuf = []; }
+      convo = false; $('listen').value = 'ptt'; closeMic(); add('Listening paused while the voice studio is open.', 'note'); return;
+    }
+    if (e.data === 'studio-closed' && modeBeforeStudio) {
+      $('listen').value = modeBeforeStudio; modeBeforeStudio = null; $('listen').onchange(); add('Listening resumed.', 'note'); return;
+    }
+  };
+  bc.postMessage('new-tab');
+} catch {}
+// Every time Echo opens it listens for "Hey Echo" (the mic opens; Chrome asks permission once).
+$('listen').value = 'wake'; $('listen').onchange();
+</script>
+</body>
+</html>

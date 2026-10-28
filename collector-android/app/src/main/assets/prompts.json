@@ -1,0 +1,590 @@
+[
+ {
+  "id": "conversational-01",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "Well, I'll tell you, it's been one of those weeks where everything happens at once."
+ },
+ {
+  "id": "conversational-02",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "Come on in and sit down. Can I get you something to drink?"
+ },
+ {
+  "id": "conversational-03",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "I don't mind waiting. Take your time, there's no rush at all."
+ },
+ {
+  "id": "conversational-04",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "You know what? I think you're right about that."
+ },
+ {
+  "id": "conversational-05",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "Let me think about it for a second before I give you an answer."
+ },
+ {
+  "id": "conversational-06",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "That reminds me of something my father used to say."
+ },
+ {
+  "id": "conversational-07",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "I was just about to call you, actually."
+ },
+ {
+  "id": "conversational-08",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "Honestly, I wasn't expecting that, but I'm glad it worked out."
+ },
+ {
+  "id": "conversational-09",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "Give me a minute, I'm still finding my glasses."
+ },
+ {
+  "id": "conversational-10",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "It's good to hear your voice. How have you been keeping?"
+ },
+ {
+  "id": "conversational-11",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "We should do this more often. It's been far too long."
+ },
+ {
+  "id": "conversational-12",
+  "category": "conversational",
+  "style": "Say it naturally, as if talking to a friend across the table.",
+  "read": true,
+  "text": "Hold on, say that again. I want to make sure I heard you right."
+ },
+ {
+  "id": "factual-01",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "Water boils at a lower temperature the higher up a mountain you go."
+ },
+ {
+  "id": "factual-02",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "A computer only does exactly what it's told, which is both its strength and its weakness."
+ },
+ {
+  "id": "factual-03",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "To change a tire, loosen the lug nuts first, then jack up the car."
+ },
+ {
+  "id": "factual-04",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "The moon doesn't make its own light; it reflects light from the sun."
+ },
+ {
+  "id": "factual-05",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "Most of the weight of a tree comes from carbon it pulls out of the air."
+ },
+ {
+  "id": "factual-06",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "When you save a file, the computer writes it from memory onto the drive."
+ },
+ {
+  "id": "factual-07",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "Thunder is the sound of air expanding very quickly around a lightning bolt."
+ },
+ {
+  "id": "factual-08",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "A good budget starts with knowing exactly where every dollar goes."
+ },
+ {
+  "id": "factual-09",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "Microphones turn tiny changes in air pressure into an electrical signal."
+ },
+ {
+  "id": "factual-10",
+  "category": "factual",
+  "style": "Explain it clearly and calmly, like you're teaching someone.",
+  "read": true,
+  "text": "Bread rises because yeast produces gas that gets trapped in the dough."
+ },
+ {
+  "id": "storytelling-01",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "It was the middle of winter, and the truck wouldn't start no matter what we tried."
+ },
+ {
+  "id": "storytelling-02",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "The first time I drove a car by myself, I was so nervous my hands were shaking."
+ },
+ {
+  "id": "storytelling-03",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "We got completely lost that day, but it turned into one of the best trips we ever took."
+ },
+ {
+  "id": "storytelling-04",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "There was an old man down the street who knew everybody's name, and everybody knew his."
+ },
+ {
+  "id": "storytelling-05",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "I remember the smell of the kitchen on Sunday mornings, like coffee and bacon."
+ },
+ {
+  "id": "storytelling-06",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "The storm knocked the power out, so we sat around with candles and told stories all night."
+ },
+ {
+  "id": "storytelling-07",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "He looked me right in the eye and said, son, never give up on something you care about."
+ },
+ {
+  "id": "storytelling-08",
+  "category": "storytelling",
+  "style": "Tell it like a story, with feeling and natural pauses.",
+  "read": true,
+  "text": "By the time we got to the top of the hill, the sun was just coming up over the trees."
+ },
+ {
+  "id": "questions-01",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "Have you ever wondered what you'd do if you could start over?"
+ },
+ {
+  "id": "questions-02",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "What time did you say the game starts tonight?"
+ },
+ {
+  "id": "questions-03",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "Are you sure that's the right road? It doesn't look familiar."
+ },
+ {
+  "id": "questions-04",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "Did anybody remember to lock the back door?"
+ },
+ {
+  "id": "questions-05",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "Would you rather have a quiet weekend at home or a trip somewhere new?"
+ },
+ {
+  "id": "questions-06",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "Why does it always rain on the one day you plan something outside?"
+ },
+ {
+  "id": "questions-07",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "How long has it been since we last talked?"
+ },
+ {
+  "id": "questions-08",
+  "category": "questions",
+  "style": "Ask it like a real question, with curiosity.",
+  "read": true,
+  "text": "Who taught you to fish like that?"
+ },
+ {
+  "id": "calm-01",
+  "category": "calm",
+  "style": "Read slowly, softly and calmly, as if reassuring someone.",
+  "read": true,
+  "text": "It's all right. Take a deep breath. We'll figure this out together."
+ },
+ {
+  "id": "calm-02",
+  "category": "calm",
+  "style": "Read slowly, softly and calmly, as if reassuring someone.",
+  "read": true,
+  "text": "There's no need to worry about that tonight. Get some rest."
+ },
+ {
+  "id": "calm-03",
+  "category": "calm",
+  "style": "Read slowly, softly and calmly, as if reassuring someone.",
+  "read": true,
+  "text": "Whatever happens, I want you to know that I'm proud of you."
+ },
+ {
+  "id": "calm-04",
+  "category": "calm",
+  "style": "Read slowly, softly and calmly, as if reassuring someone.",
+  "read": true,
+  "text": "Some things take time, and that's perfectly okay."
+ },
+ {
+  "id": "calm-05",
+  "category": "calm",
+  "style": "Read slowly, softly and calmly, as if reassuring someone.",
+  "read": true,
+  "text": "Just listen to the rain for a minute. It's peaceful, isn't it?"
+ },
+ {
+  "id": "calm-06",
+  "category": "calm",
+  "style": "Read slowly, softly and calmly, as if reassuring someone.",
+  "read": true,
+  "text": "You did the best you could, and that's all anyone can ask."
+ },
+ {
+  "id": "enthusiastic-01",
+  "category": "enthusiastic",
+  "style": "Say it with real energy and excitement.",
+  "read": true,
+  "text": "Are you kidding me? That's fantastic news!"
+ },
+ {
+  "id": "enthusiastic-02",
+  "category": "enthusiastic",
+  "style": "Say it with real energy and excitement.",
+  "read": true,
+  "text": "Did you see that catch? That was unbelievable!"
+ },
+ {
+  "id": "enthusiastic-03",
+  "category": "enthusiastic",
+  "style": "Say it with real energy and excitement.",
+  "read": true,
+  "text": "We did it! After all that work, it actually runs!"
+ },
+ {
+  "id": "enthusiastic-04",
+  "category": "enthusiastic",
+  "style": "Say it with real energy and excitement.",
+  "read": true,
+  "text": "Oh, I love this song! Turn it up!"
+ },
+ {
+  "id": "enthusiastic-05",
+  "category": "enthusiastic",
+  "style": "Say it with real energy and excitement.",
+  "read": true,
+  "text": "That's the best thing I've eaten all year, no question about it."
+ },
+ {
+  "id": "enthusiastic-06",
+  "category": "enthusiastic",
+  "style": "Say it with real energy and excitement.",
+  "read": true,
+  "text": "You got the job? Congratulations, I knew you would!"
+ },
+ {
+  "id": "slow-01",
+  "category": "slow",
+  "style": "Read this one slowly and deliberately.",
+  "read": true,
+  "text": "Listen carefully, because this is important, and I only want to say it once."
+ },
+ {
+  "id": "slow-02",
+  "category": "slow",
+  "style": "Read this one slowly and deliberately.",
+  "read": true,
+  "text": "The most valuable thing you can give someone is your time."
+ },
+ {
+  "id": "slow-03",
+  "category": "slow",
+  "style": "Read this one slowly and deliberately.",
+  "read": true,
+  "text": "Measure twice, cut once. That rule has saved me more than once."
+ },
+ {
+  "id": "slow-04",
+  "category": "slow",
+  "style": "Read this one slowly and deliberately.",
+  "read": true,
+  "text": "Every morning is another chance to get things right."
+ },
+ {
+  "id": "fast-01",
+  "category": "fast",
+  "style": "Read this one quickly, like you're in a bit of a hurry.",
+  "read": true,
+  "text": "Okay, grab your coat, grab the keys, we're already ten minutes late."
+ },
+ {
+  "id": "fast-02",
+  "category": "fast",
+  "style": "Read this one quickly, like you're in a bit of a hurry.",
+  "read": true,
+  "text": "I need milk, eggs, bread, coffee, and whatever else is on the list by the door."
+ },
+ {
+  "id": "fast-03",
+  "category": "fast",
+  "style": "Read this one quickly, like you're in a bit of a hurry.",
+  "read": true,
+  "text": "Quick, quick, turn on the TV, they're talking about it on the news right now."
+ },
+ {
+  "id": "fast-04",
+  "category": "fast",
+  "style": "Read this one quickly, like you're in a bit of a hurry.",
+  "read": true,
+  "text": "Call me back when you get this, it's nothing bad, just give me a call."
+ },
+ {
+  "id": "short-01",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Yes."
+ },
+ {
+  "id": "short-02",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "No, thank you."
+ },
+ {
+  "id": "short-03",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Absolutely."
+ },
+ {
+  "id": "short-04",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Good morning."
+ },
+ {
+  "id": "short-05",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Hmm, maybe."
+ },
+ {
+  "id": "short-06",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "I'm sorry to hear that."
+ },
+ {
+  "id": "short-07",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Thank you so much."
+ },
+ {
+  "id": "short-08",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Goodnight, everybody."
+ },
+ {
+  "id": "short-09",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Oh, really?"
+ },
+ {
+  "id": "short-10",
+  "category": "short",
+  "style": "Say each one naturally. Short phrases matter too.",
+  "read": true,
+  "text": "Well, there you go."
+ },
+ {
+  "id": "long-01",
+  "category": "long",
+  "style": "Read this longer passage naturally, taking breaths where they feel right.",
+  "read": true,
+  "text": "When I think back on all the years, it isn't the big moments I remember most. It's the ordinary ones: a cup of coffee on the porch, a phone call from someone I love, the sound of laughter coming from the next room."
+ },
+ {
+  "id": "long-02",
+  "category": "long",
+  "style": "Read this longer passage naturally, taking breaths where they feel right.",
+  "read": true,
+  "text": "If you're going to take on a project, do it properly. Read the instructions, lay out your tools, and don't be afraid to ask for help. There's no shame in learning something new, no matter how old you are."
+ },
+ {
+  "id": "long-03",
+  "category": "long",
+  "style": "Read this longer passage naturally, taking breaths where they feel right.",
+  "read": true,
+  "text": "Technology changes so fast these days that it's hard to keep up. But the important things don't really change. People still want to be heard, to be understood, and to know that somebody cares about them."
+ },
+ {
+  "id": "long-04",
+  "category": "long",
+  "style": "Read this longer passage naturally, taking breaths where they feel right.",
+  "read": true,
+  "text": "We drove for hours with the windows down, the radio playing old songs, and nobody saying much of anything. Sometimes the best conversations are the ones where you don't need to talk at all."
+ },
+ {
+  "id": "about_me-01",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "How would you explain something difficult to a beginner?"
+ },
+ {
+  "id": "about_me-02",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "How do you respond when someone disagrees with you?"
+ },
+ {
+  "id": "about_me-03",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "How do you show respect when discussing a sensitive topic?"
+ },
+ {
+  "id": "about_me-04",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "What makes a conversation enjoyable for you?"
+ },
+ {
+  "id": "about_me-05",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "How do you approach a technical problem you've never seen before?"
+ },
+ {
+  "id": "about_me-06",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "What interests would you like Echo to understand about you?"
+ },
+ {
+  "id": "about_me-07",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "What's an important life lesson you'd want to pass on?"
+ },
+ {
+  "id": "about_me-08",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "Tell me about a place that means a lot to you."
+ },
+ {
+  "id": "about_me-09",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "Describe a typical good day in your life."
+ },
+ {
+  "id": "about_me-10",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "Who has influenced you the most, and why?"
+ },
+ {
+  "id": "about_me-11",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "What do you want the people you love to remember about you?"
+ },
+ {
+  "id": "about_me-12",
+  "category": "about_me",
+  "style": "Answer in your own words. Speak naturally for 30 seconds to 2 minutes.",
+  "read": false,
+  "text": "Tell me a funny story from your life."
+ }
+]

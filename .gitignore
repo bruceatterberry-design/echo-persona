@@ -1,0 +1,34 @@
+# NEVER commit personal data
+data/
+datasets/
+models/
+*.wav
+*.mp3
+*.m4a
+*.mp4
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.heic
+*.sqlite
+*.db
+*.key
+*.pem
+.env
+secrets/
+logs/
+.venv/
+__pycache__/
+node_modules/
+.DS_Store
+# allow small synthetic test fixtures
+!tests/fixtures/**
+config/echo.yaml
+face/facefind
+animate/
+data/chrome-echo/
+config/google-client.json
+config/personality.yaml
+config/claude.json
+*.apk

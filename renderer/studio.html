@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Studio</title>
+<style>
+  :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+          --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--line); gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  a { color: var(--accent); }
+  main { max-width: 860px; margin: 0 auto; padding: 28px 16px 60px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 24px; margin-bottom: 18px; }
+  .cat { font-size: 12px; letter-spacing: .18em; text-transform: uppercase; color: var(--accent); }
+  .style { color: var(--dim); font-size: 14px; margin: 4px 0 16px; }
+  #prompt { font-size: 28px; line-height: 1.35; font-weight: 400; min-height: 2.7em; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 10px; padding: 10px 18px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .35; cursor: default; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: #07131b; }
+  button.rec { background: var(--err); border-color: var(--err); color: #fff; }
+  button.keep { border-color: var(--good); color: var(--good); }
+  button.redo { border-color: var(--warn); color: var(--warn); }
+  kbd { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--dim); margin-left: 4px; }
+  #meter { position: relative; height: 10px; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; margin: 18px 0 6px; }
+  #bar { height: 100%; width: 0; background: var(--good); transition: width .05s; }
+  #zone { position: absolute; top: 0; bottom: 0; left: 60%; width: 25%; border-left: 1px dashed var(--dim); border-right: 1px dashed var(--err); }
+  .hint { color: var(--dim); font-size: 13px; }
+  #qc { margin-top: 14px; font-size: 14px; }
+  #qc .v { font-weight: 600; }
+  .good { color: var(--good); } .warn { color: var(--warn); } .fail { color: var(--err); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat b { display: block; font-size: 22px; font-weight: 400; }
+  .stat span { color: var(--dim); font-size: 12px; }
+  progress { width: 100%; height: 8px; accent-color: var(--good); }
+  textarea, input[type=text] { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: inherit; }
+  #recDot { display: none; color: var(--err); font-weight: 600; }
+  #recDot.on { display: inline; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+  .hidden { display: none; }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>VOICE STUDIO</h1>
+  <div class="row"><span id="recDot">● RECORDING</span><span id="micState" class="hint">Mic off</span><a href="/">← Back to Echo</a></div>
+</header>
+<main>
+  <div id="errBox" class="card hidden fail"></div>
+
+  <section id="consentCard" class="card hidden" aria-labelledby="ch">
+    <h2 id="ch" style="margin-top:0;font-weight:400">Before we start</h2>
+    <p id="consentText"></p>
+    <label for="consentName" class="hint">Type your full name to agree</label>
+    <input type="text" id="consentName" value="" autocomplete="name">
+    <div class="row" style="margin-top:14px"><button class="primary" id="consentBtn">I agree</button></div>
+  </section>
+
+  <section id="studio" class="hidden">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><div class="cat" id="cat"></div><div class="style" id="style"></div></div>
+        <label class="hint">Category <select id="catSel"><option value="">Mixed</option></select></label>
+      </div>
+      <div id="prompt" aria-live="polite"></div>
+      <div id="customWrap" class="hidden" style="margin-top:10px">
+        <textarea id="customText" rows="2" placeholder="What will you talk about? (optional; helps you find it later)"></textarea>
+      </div>
+      <div id="meter" aria-hidden="true"><div id="bar"></div><div id="zone" title="Aim for your loud parts to land between the lines"></div></div>
+      <div class="hint">Aim for your voice to reach the dotted zone. Red means too loud. Keep about a hand's width from the mic.</div>
+      <div class="row" style="margin-top:18px">
+        <button class="primary" id="recBtn">Record<kbd>Space</kbd></button>
+        <button id="playBtn" disabled>Play back<kbd>P</kbd></button>
+        <button class="keep" id="keepBtn" disabled>Keep &amp; next<kbd>Enter</kbd></button>
+        <button class="redo" id="redoBtn" disabled>Redo<kbd>R</kbd></button>
+        <button id="skipBtn">Skip<kbd>S</kbd></button>
+        <button id="freeBtn">Free talk</button>
+      </div>
+      <div id="qc" aria-live="polite"></div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px"><b style="font-weight:400">Progress</b><span class="hint" id="target"></span></div>
+      <progress id="prog" max="30" value="0"></progress>
+      <div class="stats" style="margin-top:14px">
+        <div class="stat"><b id="sKept">0</b><span>minutes kept</span></div>
+        <div class="stat"><b id="sTakes">0</b><span>takes recorded</span></div>
+        <div class="stat"><b id="sPrompts">0</b><span>prompts done</span></div>
+        <div class="stat"><b id="sMb">0</b><span>MB on external SSD</span></div>
+      </div>
+      <p class="hint" style="margin-bottom:0">Originals are saved untouched and read-only to <span id="root"></span>. Sessions of 10–15 minutes over several days give the best variety.</p>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px"><b style="font-weight:400">Phone recordings (Echo Persona Collector)</b><span class="hint" id="phoneStat"></span></div>
+      <p class="hint" style="margin-top:0">Plug the phone into the Mac with a USB cable, then click below. Every file is checked against its fingerprint before the phone is told it was copied safely.</p>
+      <div class="row"><button id="phoneBtn">Copy from phone</button><span id="phoneMsg" class="hint"></span></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const api = async (path, opts = {}) => {
+  const r = await fetch('/api/studio/' + path, opts); const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || r.statusText); return j;
+};
+const json = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+function showErr(msg) { $('errBox').textContent = msg; $('errBox').classList.toggle('hidden', !msg); }
+
+// Pause Echo's listening while the studio is open, so it doesn't answer during recordings.
+let bc; try { bc = new BroadcastChannel('echo'); bc.postMessage('studio-open'); addEventListener('pagehide', () => bc.postMessage('studio-closed')); } catch {}
+
+let prompts = [], stats = null, session = null, current = null, queue = [];
+let stream = null, ctx = null, rate = 48000, recording = false, chunks = [], lastWav = null, lastTake = null, audioEl = null;
+
+async function init() {
+  try {
+    const st = await api('status');
+    $('root').textContent = st.dataset_root;
+    if (!st.dataset_ok) { showErr('The data folder (' + st.dataset_root + ') isn’t available, so there’s nowhere safe to save recordings. Plug in the drive (or set dataset_root in config/echo.yaml) and reload this page.'); return; }
+    prompts = await api('prompts'); stats = st.stats;
+    const cats = [...new Set(prompts.map(p => p.category))];
+    for (const c of cats) { const o = document.createElement('option'); o.value = c; o.textContent = c.replace('_', ' '); $('catSel').appendChild(o); }
+    if (!st.consent) { $('consentText').textContent = st.consent_text; $('consentCard').classList.remove('hidden'); return; }
+    start();
+  } catch (e) { showErr('Can’t reach Echo: ' + e.message); }
+}
+$('consentBtn').onclick = async () => {
+  try { await api('consent', json({ name: $('consentName').value })); $('consentCard').classList.add('hidden'); start(); }
+  catch (e) { showErr(e.message); }
+};
+
+async function start() {
+  $('studio').classList.remove('hidden');
+  renderStats(); buildQueue(); next();
+}
+function buildQueue() {
+  const done = new Set(stats.kept_prompt_ids), cat = $('catSel').value;
+  let todo = prompts.filter(p => !done.has(p.id) && (!cat || p.category === cat));
+  if (!todo.length) todo = prompts.filter(p => !cat || p.category === cat);  // all done: go around again
+  if (!cat) {  // mix categories so a session covers many styles
+    const by = {}; todo.forEach(p => (by[p.category] ||= []).push(p));
+    Object.values(by).forEach(a => a.sort(() => Math.random() - .5));
+    queue = []; let added = true;
+    while (added) { added = false; for (const a of Object.values(by).sort(() => Math.random() - .5)) if (a.length) { queue.push(a.shift()); added = true; } }
+  } else queue = todo;
+}
+$('catSel').onchange = () => { buildQueue(); next(); };
+function show(p) {
+  current = p; lastWav = null; lastTake = null; $('qc').innerHTML = '';
+  $('cat').textContent = p.category.replace('_', ' '); $('style').textContent = p.style;
+  $('prompt').textContent = p.text; $('customWrap').classList.toggle('hidden', p.id !== 'custom');
+  setButtons();
+}
+function next() { if (!queue.length) buildQueue(); show(queue.shift()); }
+$('freeBtn').onclick = () => show({ id: 'custom', category: 'free talk', text: 'Talk about anything you like, for as long as you like.', style: 'Speak naturally in your own words.', read: false });
+$('skipBtn').onclick = () => { if (!recording) next(); };
+
+function setButtons() {
+  $('recBtn').textContent = recording ? 'Stop' : (lastWav ? 'Record again' : 'Record');
+  $('recBtn').appendChild(Object.assign(document.createElement('kbd'), { textContent: 'Space' }));
+  $('recBtn').className = recording ? 'rec' : 'primary';
+  $('playBtn').disabled = recording || !lastWav;
+  $('keepBtn').disabled = recording || !lastTake;
+  $('redoBtn').disabled = recording || !lastTake;
+  $('skipBtn').disabled = $('freeBtn').disabled = recording;
+  $('recDot').classList.toggle('on', recording);
+}
+
+// ---- recording: raw PCM, browser processing OFF (cloning needs the natural voice) ----
+async function openMic() {
+  if (stream) return;
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+  ctx = new AudioContext(); rate = ctx.sampleRate;
+  const src = ctx.createMediaStreamSource(stream), proc = ctx.createScriptProcessor(4096, 1, 1), mute = ctx.createGain(); mute.gain.value = 0;
+  proc.onaudioprocess = e => {
+    const b = new Float32Array(e.inputBuffer.getChannelData(0));
+    if (recording) chunks.push(b);
+    let pk = 0; for (const x of b) pk = Math.max(pk, Math.abs(x));
+    const db = 20 * Math.log10(pk + 1e-6), pct = Math.max(0, Math.min(100, (db + 60) / 60 * 100));
+    $('bar').style.width = pct + '%'; $('bar').style.background = db > -3 ? 'var(--err)' : db > -24 ? 'var(--good)' : 'var(--warn)';
+  };
+  src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+  $('micState').textContent = '● Mic on (' + (rate / 1000) + ' kHz)'; $('micState').style.color = 'var(--err)';
+}
+function toWav(chunks) {
+  const n = chunks.reduce((a, c) => a + c.length, 0), buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const w = (o, s) => [...s].forEach((ch, i) => v.setUint8(o + i, ch.charCodeAt(0)));
+  w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+  let o = 44; for (const c of chunks) for (const x of c) { v.setInt16(o, Math.max(-1, Math.min(1, x)) * 32767, true); o += 2; }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+async function toggleRec() {
+  showErr('');
+  if (!recording) {
+    try { await openMic(); } catch { showErr('I can’t reach the microphone. Allow microphone access for this page.'); return; }
+    if (lastTake && lastTake.status === 'pending') await mark('rejected');   // re-recording replaces the last take
+    if (!session) session = (await api('session', { method: 'POST' })).session;
+    chunks = []; recording = true; setButtons(); return;
+  }
+  recording = false; await new Promise(r => setTimeout(r, 150)); // let the last audio buffer arrive
+  lastWav = toWav(chunks); setButtons();
+  $('qc').innerHTML = '<span class="hint">Saving and checking…</span>';
+  try {
+    const q = new URLSearchParams({ session, prompt_id: current.id });
+    if (current.id === 'custom') q.set('custom_text', $('customText').value);
+    lastTake = await api('take?' + q, { method: 'POST', body: lastWav });
+    renderQC(lastTake); stats.takes++; renderStats();
+  } catch (e) { $('qc').innerHTML = ''; showErr('Couldn’t save that take: ' + e.message); }
+  setButtons();
+}
+function renderQC(t) {
+  const label = { good: 'Sounds good', warn: 'Usable, with notes', fail: 'Please redo this one' }[t.verdict] || t.verdict;
+  const details = t.duration_s >= 0.3
+    ? `${t.duration_s}s · loudest ${t.peak_dbfs} dB · voice ${t.speech_dbfs} dB · background ${t.noise_dbfs} dB · clarity ${t.snr_db} dB`
+      + (t.read_match !== undefined ? ` · words matched ${Math.round(t.read_match * 100)}%` : '') : '';
+  $('qc').innerHTML = '';
+  const v = document.createElement('div'); v.className = 'v ' + t.verdict; v.textContent = label; $('qc').appendChild(v);
+  for (const i of t.issues || []) { const d = document.createElement('div'); d.className = t.verdict; d.textContent = '• ' + i; $('qc').appendChild(d); }
+  const d = document.createElement('div'); d.className = 'hint'; d.textContent = details; $('qc').appendChild(d);
+  if (t.transcript) { const h = document.createElement('div'); h.className = 'hint'; h.textContent = 'Heard: “' + t.transcript + '”'; $('qc').appendChild(h); }
+}
+async function mark(status) {
+  const t = await api(`take/${lastTake.session}/${lastTake.take}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+  lastTake = t; return t;
+}
+$('recBtn').onclick = toggleRec;
+$('playBtn').onclick = () => { if (!lastWav) return; audioEl && audioEl.pause(); audioEl = new Audio(URL.createObjectURL(lastWav)); audioEl.play(); };
+$('keepBtn').onclick = async () => {
+  if (!lastTake) return;
+  if (lastTake.verdict === 'fail' && !confirm('This take has quality problems. Keep it anyway?')) return;
+  await mark('kept');
+  stats.kept_minutes = +(stats.kept_minutes + lastTake.duration_s / 60).toFixed(1);
+  if (current.id !== 'custom') stats.kept_prompt_ids.push(current.id);
+  renderStats(); next();
+};
+$('redoBtn').onclick = async () => { if (!lastTake) return; await mark('rejected'); show(current); };
+function renderStats() {
+  $('sKept').textContent = stats.kept_minutes; $('sTakes').textContent = stats.takes;
+  $('sPrompts').textContent = new Set(stats.kept_prompt_ids).size + ' / ' + prompts.length; $('sMb').textContent = stats.raw_mb;
+  $('prog').max = stats.target_minutes; $('prog').value = stats.kept_minutes;
+  $('target').textContent = `Goal for a first voice: ${stats.target_minutes} minutes of kept speech`;
+}
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) || $('studio').classList.contains('hidden')) return;
+  const k = e.key.toLowerCase();
+  if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) toggleRec(); }
+  else if (k === 'enter' && !$('keepBtn').disabled) { e.preventDefault(); $('keepBtn').click(); }
+  else if (k === 'r' && !$('redoBtn').disabled) $('redoBtn').click();
+  else if (k === 'p' && !$('playBtn').disabled) $('playBtn').click();
+  else if (k === 's' && !recording) next();
+});
+async function phoneStatus() {
+  try { const s = await (await fetch('/api/phone/status')).json();
+    $('phoneStat').textContent = s.error ? s.error : `${s.sessions} sessions · ${s.kept_minutes} min kept` + (s.last ? ` · last ${s.last.slice(0, 8)}` : ''); } catch {}
+}
+$('phoneBtn').onclick = async () => {
+  $('phoneBtn').disabled = true; $('phoneMsg').textContent = 'Copying… (keep the cable plugged in)'; $('phoneMsg').style.color = '';
+  try {
+    const r = await fetch('/api/phone/sync', { method: 'POST' }), j = await r.json();
+    if (!r.ok) throw new Error(j.detail);
+    const failed = Object.entries(j.failed);
+    $('phoneMsg').textContent = `Copied ${j.copied.length} new session(s) (${(j.bytes / 1e6).toFixed(0)} MB, ${j.seconds}s)` +
+      (j.already_had.length ? `, ${j.already_had.length} already safe` : '') + (j.unfinished.length ? `, ${j.unfinished.length} not finished yet` : '') +
+      (failed.length ? `. Problems: ${failed.map(([s, e]) => s + ': ' + e).join('; ')} (try again)` : '.');
+    $('phoneMsg').style.color = failed.length ? 'var(--warn)' : 'var(--good)';
+  } catch (e) { $('phoneMsg').textContent = e.message; $('phoneMsg').style.color = 'var(--err)'; }
+  $('phoneBtn').disabled = false; phoneStatus();
+};
+phoneStatus();
+document.addEventListener('click', e => { const b = e.target.closest('button'); b && b.blur(); });  // keys go to the studio, not the last button
+init();
+</script>
+</body>
+</html>

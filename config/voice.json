@@ -1,0 +1,5 @@
+{
+  "reference": "storytelling",
+  "stt": "parakeet",
+  "stt_note": "parakeet = NVIDIA Parakeet TDT 0.6B v2 (fast, accurate English). Set to \"whisper\" to use Whisper instead, then restart com.echopersona.core."
+}

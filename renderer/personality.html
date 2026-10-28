@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How I Talk</title>
+<style>
+  :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+          --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--line); gap: 12px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  a { color: var(--accent); }
+  main { max-width: 900px; margin: 0 auto; padding: 22px 16px 60px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px; margin-bottom: 16px; }
+  h2 { font-weight: 400; font-size: 18px; margin: 0 0 6px; }
+  .hint { color: var(--dim); font-size: 13px; }
+  .cat { font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 18px 0 8px; }
+  .trait { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .trait.approved { border-color: var(--good); }
+  .trait.rejected { opacity: .4; }
+  .trait input { width: 100%; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 15px; padding: 2px 0; }
+  .trait input:focus { outline: 1px solid var(--accent); border-radius: 4px; }
+  .quote { color: var(--dim); font-size: 13px; font-style: italic; margin: 4px 0 6px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  button.yes.on { background: var(--good); border-color: var(--good); color: #07131b; }
+  button.no.on { background: var(--err); border-color: var(--err); color: #fff; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pill { font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 99px; padding: 1px 8px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 10px; }
+  .stats b { display: block; font-size: 20px; font-weight: 400; }
+  textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px; font: inherit; }
+  .answer { white-space: pre-wrap; border-left: 2px solid var(--accent); padding: 6px 12px; margin: 10px 0; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tabs button.on { background: var(--accent); color: #07131b; }
+</style>
+</head>
+<body>
+<header><h1>HOW I TALK</h1><a href="/">← Back to Echo</a></header>
+<main>
+  <div id="err" class="card hidden" style="display:none;color:var(--err)"></div>
+  <div class="card">
+    <h2>Learned from your own words</h2>
+    <p class="hint" id="intro"></p>
+    <div class="stats" id="stats"></div>
+  </div>
+  <div class="tabs"><button data-tab="traits" class="on">Traits</button><button data-tab="facts">Facts about you</button><button data-tab="try">Try it</button></div>
+
+  <section id="tab-traits">
+    <p class="hint">Each trait comes with the words you actually said. <b>Approve</b> the ones that are really you (edit the wording if you like); <b>Reject</b> anything that isn't. Only approved traits shape how Echo talks, and changes take effect immediately.</p>
+    <div class="card" id="sumCard" style="display:none">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Summary Echo uses</h2>
+        <label class="hint"><input type="checkbox" id="useSum"> Use this short summary (instead of every approved trait)</label></div>
+      <p class="hint">Made from your approved traits only, one line per idea. Edit any line, or add/remove lines (one per line), then Save.</p>
+      <textarea id="sumText" rows="10"></textarea>
+      <div class="row" style="margin-top:8px"><button id="sumSave">Save summary</button><button id="sumRedo">Make a new summary</button><span class="hint" id="sumState"></span></div>
+    </div>
+    <div class="row" style="margin-bottom:6px"><span class="hint" id="tcount"></span><span style="flex:1"></span>
+      <button id="updBtn">Look for new recordings</button><span class="hint" id="updState"></span></div>
+    <div id="traits"></div>
+  </section>
+
+  <section id="tab-facts" style="display:none">
+    <p class="hint">Things you mentioned about yourself. <b>Save</b> puts one in Echo's memory as a confirmed fact (you can still edit or forget it in "What I remember").</p>
+    <div id="facts"></div>
+  </section>
+
+  <section id="tab-try" style="display:none">
+    <div class="card">
+      <p class="hint" style="margin-top:0">Ask Echo something and judge the answer: does it sound like you? Your ratings are saved, so we can see improvement as you approve traits.</p>
+      <div class="row" id="presets"></div>
+      <textarea id="q" rows="2" style="margin-top:10px" placeholder="Or type your own question…"></textarea>
+      <div class="row" style="margin-top:8px"><button id="ask">Ask Echo</button><span class="hint" id="askState"></span></div>
+      <div id="answers"></div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const PRESETS = ['How would you explain a computer to a beginner?', 'What makes a good day for you?', 'Someone disagrees with you about something important. What do you do?',
+  'What would you want people to remember about you?', 'How do you approach a problem you have never seen before?', 'Tell me something you are grateful for.'];
+let D = null;
+const api = async (path, opts = {}) => { const r = await fetch('/api/personality' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const j = await r.json(); if (!r.ok) throw new Error(j.detail); return j; };
+function err(m) { $('err').style.display = m ? 'block' : 'none'; $('err').textContent = m || ''; }
+async function load() {
+  try { D = await api(''); } catch (e) { err(e.message === 'No personality draft yet.' ? 'No personality draft yet. Record some "about me" answers first.' : 'Can’t reach Echo: ' + e.message); return; }
+  const s = D.style;
+  $('intro').textContent = `From ${D.examples} of your recordings (${s.words} words). ${D.dropped_ungrounded} suggestions were thrown out because they couldn't be backed by your exact words.`;
+  const fillers = Object.entries(s.fillers).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => `“${k}”`).join(', ') || '—';
+  $('stats').innerHTML = '';
+  for (const [label, val] of [['words per sentence', s.avg_sentence_words], ['vocabulary variety', s.vocabulary_variety], ['words you lean on', fillers]]) {
+    const d = document.createElement('div'); const b = document.createElement('b'); b.textContent = val; d.append(b, label); $('stats').appendChild(d);
+  }
+  render();
+}
+function renderSummary() {
+  $('sumCard').style.display = 'block';
+  $('sumText').value = (D.condensed || []).map(c => c.text).join('\n');
+  $('useSum').checked = !!D.use_condensed;
+}
+$('useSum').onchange = async () => { const r = await api('/condensed', { method: 'PATCH', body: JSON.stringify({ use: $('useSum').checked }) });
+  Object.assign(D, r); renderSummary(); $('sumState').textContent = r.use_condensed ? 'Using the summary.' : 'Using every approved trait.'; };
+$('sumSave').onclick = async () => { const r = await api('/condensed', { method: 'PATCH', body: JSON.stringify({ lines: $('sumText').value.split('\n') }) });
+  Object.assign(D, r); renderSummary(); $('sumState').textContent = 'Saved.'; };
+$('sumRedo').onclick = async () => { $('sumState').textContent = 'Making a new summary (about a minute)…'; $('sumRedo').disabled = true;
+  try { const r = await api('/condense', { method: 'POST' }); Object.assign(D, r); renderSummary(); $('sumState').textContent = 'New summary in use.'; }
+  catch (e) { $('sumState').textContent = e.message; } $('sumRedo').disabled = false; };
+$('updBtn').onclick = async () => {
+  $('updBtn').disabled = true; $('updState').textContent = 'Reading new recordings…';
+  await api('/update', { method: 'POST' });
+  const poll = setInterval(async () => {
+    const j = await api('/update');
+    if (j.running) return;
+    clearInterval(poll); $('updBtn').disabled = false;
+    if (j.error) { $('updState').textContent = 'Couldn’t update: ' + j.error; return; }
+    const u = j.last || {};
+    $('updState').textContent = u.new_recordings ? `Read ${u.new_recordings} new recording(s): ${u.traits} new trait(s) to review, ${u.matched} matched ones you already decided.`
+                                                 : 'No new recordings since last time.';
+    load();
+  }, 3000);
+};
+function render() {
+  renderSummary();
+  const T = $('traits'); T.innerHTML = '';
+  const n = { approved: 0, rejected: 0, pending: 0 }; D.traits.forEach(t => n[t.status]++);
+  $('tcount').textContent = `${n.approved} approved · ${n.rejected} rejected · ${n.pending} to review`;
+  let cat = '';
+  for (const t of D.traits) {
+    if (t.category !== cat) { cat = t.category; const h = document.createElement('div'); h.className = 'cat'; h.textContent = cat; T.appendChild(h); }
+    const d = document.createElement('div'); d.className = 'trait ' + t.status;
+    const inp = document.createElement('input'); inp.value = t.trait; inp.setAttribute('aria-label', 'Trait wording');
+    inp.onchange = () => patch('trait', t.id, { trait: inp.value });
+    d.appendChild(inp);
+    for (const e of t.evidence.slice(0, 2)) { const q = document.createElement('div'); q.className = 'quote'; q.textContent = '“' + e.quote + '”'; d.appendChild(q); }
+    const row = document.createElement('div'); row.className = 'row';
+    const srcs = new Set(t.evidence.map(e => e.source)).size;
+    const pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = srcs > 1 ? `heard in ${srcs} recordings` : 'heard once';
+    const b = (label, cls, st) => { const x = document.createElement('button'); x.textContent = label; x.className = cls + (t.status === st ? ' on' : '');
+      x.onclick = () => patch('trait', t.id, { status: t.status === st ? 'pending' : st }); return x; };
+    row.append(b('Approve', 'yes', 'approved'), b('Reject', 'no', 'rejected'), pill); d.appendChild(row); T.appendChild(d);
+  }
+  const F = $('facts'); F.innerHTML = '';
+  if (!D.facts.length) F.innerHTML = '<p class="hint">No facts found yet.</p>';
+  for (const f of D.facts) {
+    const d = document.createElement('div'); d.className = 'trait ' + (f.status === 'saved' ? 'approved' : f.status === 'rejected' ? 'rejected' : '');
+    const t = document.createElement('div'); t.textContent = f.fact; const q = document.createElement('div'); q.className = 'quote'; q.textContent = '“' + f.quote + '”';
+    const row = document.createElement('div'); row.className = 'row';
+    const save = document.createElement('button'); save.className = 'yes' + (f.status === 'saved' ? ' on' : ''); save.textContent = f.status === 'saved' ? 'Saved to memory' : 'Save to memory';
+    save.disabled = f.status === 'saved'; save.onclick = () => patch('fact', f.id, { status: 'saved' });
+    const skip = document.createElement('button'); skip.className = 'no' + (f.status === 'rejected' ? ' on' : ''); skip.textContent = 'Skip';
+    skip.disabled = f.status === 'saved'; skip.onclick = () => patch('fact', f.id, { status: 'rejected' });
+    row.append(save, skip); d.append(t, q, row); F.appendChild(d);
+  }
+}
+async function patch(kind, id, body) {
+  try { const upd = await api(`/${kind}/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+    const list = kind === 'trait' ? D.traits : D.facts; Object.assign(list.find(x => x.id === id), upd); render(); }
+  catch (e) { err('Couldn’t save that: ' + e.message); }
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  for (const t of ['traits', 'facts', 'try']) $('tab-' + t).style.display = b.dataset.tab === t ? '' : 'none';
+});
+for (const p of PRESETS) { const b = document.createElement('button'); b.textContent = p; b.onclick = () => { $('q').value = p; ask(); }; $('presets').appendChild(b); }
+async function ask() {
+  const q = $('q').value.trim(); if (!q) return;
+  $('ask').disabled = true; $('askState').textContent = 'Echo is thinking…';
+  try {
+    const r = await api('/try', { method: 'POST', body: JSON.stringify({ question: q }) });
+    const box = document.createElement('div'); box.className = 'card'; box.style.background = 'var(--bg)';
+    const qq = document.createElement('div'); qq.className = 'hint'; qq.textContent = r.question;
+    const a = document.createElement('div'); a.className = 'answer'; a.textContent = r.answer;
+    const row = document.createElement('div'); row.className = 'row';
+    const note = document.createElement('input'); note.placeholder = 'What would you say differently? (optional)';
+    note.style.cssText = 'flex:1;min-width:200px;background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:5px 8px';
+    const rate = (label, cls, val) => { const x = document.createElement('button'); x.textContent = label; x.className = cls; x.onclick = async () => {
+      await api('/rate', { method: 'POST', body: JSON.stringify({ question: r.question, answer: r.answer, rating: val, note: note.value }) });
+      row.innerHTML = ''; const t = document.createElement('span'); t.className = 'hint'; t.textContent = 'Thanks, saved.'; row.appendChild(t); }; return x; };
+    row.append(rate('Sounds like me', 'yes', 'like_me'), rate("Doesn't sound like me", 'no', 'not_like_me'), note);
+    box.append(qq, a, row); $('answers').prepend(box);
+  } catch (e) { err(e.message); }
+  $('ask').disabled = false; $('askState').textContent = '';
+}
+$('ask').onclick = ask;
+load();
+</script>
+</body>
+</html>

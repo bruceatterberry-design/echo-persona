@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo Status</title>
+<style>
+  :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+          --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--line); gap: 12px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  a { color: var(--accent); }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  .wide { grid-column: 1 / -1; }
+  h2 { font-weight: 400; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row span:first-child { color: var(--dim); }
+  .ok { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--err); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 8px; }
+  .all-good { color: var(--good); font-size: 17px; }
+  .att { color: var(--warn); margin: 4px 0; }
+  pre { white-space: pre-wrap; font-size: 12px; color: var(--dim); margin: 0; }
+  .hint { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<header><h1>ECHO STATUS</h1><div><span class="hint" id="when"></span> · <a href="/">← Back to Echo</a></div></header>
+<main id="m"><div class="card wide">Checking…</div></main>
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+function card(title, rows, wide) {
+  const c = el('div', 'card' + (wide ? ' wide' : '')); c.appendChild(el('h2', '', title));
+  for (const [k, v, cls] of rows) { const r = el('div', 'row'); r.append(el('span', '', k), el('span', cls || '', v ?? '—')); c.appendChild(r); }
+  return c;
+}
+const age = a => a.days === null ? 'never' : a.days < 1 ? `today (${a.at.slice(11)})` : `${a.days} days ago`;
+const ageCls = (a, limit) => a.days === null || a.days > limit ? 'warn' : 'ok';
+async function load() {
+  let r; try { r = await (await fetch('/api/status')).json(); } catch { $('m').innerHTML = '<div class="card wide bad">Echo Persona Core isn’t answering. Restart the Mac, or see TROUBLESHOOTING.md.</div>'; return; }
+  $('when').textContent = 'checked ' + r.generated.slice(11);
+  const m = $('m'); m.innerHTML = '';
+  const top = el('div', 'card wide');
+  if (!r.attention.length) top.appendChild(el('div', 'all-good', '● Everything looks good.'));
+  else { top.appendChild(el('h2', '', 'Needs attention')); r.attention.forEach(a => top.appendChild(el('div', 'att', '• ' + a))); }
+  m.appendChild(top);
+  const sv = el('div', 'card'); sv.appendChild(el('h2', '', 'Services'));
+  for (const s of r.services) { const row = el('div', 'row'); const n = el('span'); const d = el('span', 'dot'); d.style.background = s.ok ? 'var(--good)' : 'var(--err)';
+    n.append(d, s.name); row.append(n, el('span', s.ok ? 'ok' : 'bad', s.detail)); sv.appendChild(row); }
+  m.appendChild(sv);
+  const x = r.mac;
+  m.appendChild(card('This Mac', [
+    ['Free memory', x.memory_free_pct + '%', x.memory_free_pct < 10 ? 'bad' : x.memory_free_pct < 20 ? 'warn' : 'ok'],
+    ['Swap in use', x.swap_used_gb + ' GB'], ['Internal drive free', x.internal_free_gb + ' GB', x.internal_free_gb < 15 ? 'warn' : 'ok'],
+    ['external SSD', x.ssd_connected ? `connected, ${x.ssd_free_gb} GB free` : 'NOT connected', x.ssd_connected ? 'ok' : 'bad'],
+    ['SSD encrypted', x.ssd_encrypted === null ? '—' : x.ssd_encrypted ? 'yes' : 'no', x.ssd_encrypted ? 'ok' : 'warn'],
+    ['Mac disk encrypted (FileVault)', x.filevault ? 'yes' : 'no', x.filevault ? 'ok' : 'warn']]));
+  const d = r.data;
+  m.appendChild(card('What Echo knows', [['Memories (facts)', d.memories], ['Conversation notes', d.conversation_notes],
+    ['Messages in conversation log', d.conversation_turns], ['Voice recordings kept', (d.voice_minutes ?? '—') + ' min'],
+    ['Phone sessions copied', d.phone_sessions], ['Last phone session', d.last_phone_session ? d.last_phone_session.replace(/(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d).*/, '$1-$2-$3 $4:$5') : '—'],
+    ['Face frames', d.face_frames], ['Personality', `${d.approved_traits ?? 0} approved traits` + (d.summary_lines_in_use ? `, ${d.summary_lines_in_use}-line summary in use` : '')]]));
+  const b = r.backups;
+  m.appendChild(card('Backups', [
+    ['Recordings copy (internal drive)', age(b.dataset_copy) + (b.dataset_copy.recordings_ok ? `, ${b.dataset_copy.recordings_ok} verified` : ''), ageCls(b.dataset_copy, 14)],
+    ['Memory snapshot', age(b.memory_snapshot), ageCls(b.memory_snapshot, 30)],
+    ['Off-site encrypted copy', b.offsite.days === null ? 'not made yet' : age(b.offsite) + (b.offsite.where ? ` on ${b.offsite.where}` : ''), ageCls(b.offsite, 60)],
+    ['Time Machine', 'automatic (System Settings → General → Time Machine)']]));
+  const s = r.speed;
+  m.appendChild(card('Speed', [['First word (median, last replies)', s.first_word_ms_median === null ? '—' : (s.first_word_ms_median / 1000).toFixed(2) + ' s',
+      s.first_word_ms_median > 2000 ? 'warn' : 'ok'], ['Slowest recent first word', s.first_word_ms_max === null ? '—' : (s.first_word_ms_max / 1000).toFixed(1) + ' s'],
+    ['Speech recognition', s.speech_recognition], ['Fell back to Whisper', s.fallbacks_to_whisper + ' times', s.fallbacks_to_whisper ? 'warn' : 'ok']]));
+  if (r.claude) m.appendChild(claudeCard(r.claude));
+  const p = el('div', 'card wide'); p.appendChild(el('h2', '', 'Recent warnings (no conversation content is ever logged)'));
+  p.appendChild(el('pre', '', r.speed.recent_problems.length ? r.speed.recent_problems.join('\n') : 'None.'));
+  m.appendChild(p);
+}
+const JOBS = [['personality', 'Personality updates', 'sends your own recorded words'],
+  ['condense', 'Personality summary', 'sends the traits you approved'],
+  ['summaries', 'Conversation notes', 'sends conversations: only with the OK of the people you talk with']];
+async function setClaude(body) {
+  await fetch('/api/claude', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); load();
+}
+function claudeCard(c) {
+  const k = el('div', 'card wide'); k.appendChild(el('h2', '', 'Claude helper (your Claude account, optional)'));
+  k.appendChild(el('div', 'hint', 'Does slow background jobs faster. Live replies always stay on this Mac. If it’s off, logged out, '
+    + 'over the daily limit or offline, Echo simply does the job here. Student information is never sent.'));
+  const box = (on, label, note, fn) => { const r = el('label', 'row'); const i = el('input'); i.type = 'checkbox'; i.checked = on;
+    i.onchange = () => fn(i.checked); const t = el('span'); t.append(i, ' ' + label); r.append(t, el('span', 'hint', note)); return r; };
+  k.appendChild(box(c.enabled, 'Use the Claude helper', c.installed ? `${c.used_today} of ${c.daily_limit} uses today` : 'Claude Code isn’t installed',
+    v => setClaude({enabled: v})));
+  if (c.enabled) for (const [id, label, note] of JOBS) k.appendChild(box(c.jobs[id], '— ' + label, note, v => setClaude({jobs: {[id]: v}})));
+  if (c.enabled) { const b = el('button', '', 'Test the connection'); const out = el('span', 'hint');
+    b.onclick = async () => { out.textContent = ' testing…'; const t = await (await fetch('/api/claude/test', {method: 'POST'})).json();
+      out.textContent = t.ok ? ` works (${t.seconds} s)` : ` didn’t work: ${t.error}`; };
+    const r = el('div', 'row'); r.append(b, out); k.appendChild(r); }
+  if (c.last_error) k.appendChild(el('div', 'warn', 'Last problem (did it locally instead): ' + c.last_error));
+  return k;
+}
+load(); setInterval(load, 30000);
+</script>
+</body>
+</html>

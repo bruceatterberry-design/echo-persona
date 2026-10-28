@@ -1,0 +1,13 @@
+# Echo Persona settings. Copy to config/echo.yaml (not shared in git) and change what you need; everything is optional.
+# Restart Echo afterwards: launchctl kickstart -k gui/$(id -u)/com.echopersona.core (and .voice for dataset_root).
+
+# Where recordings, photos and rendered face frames are kept. An external SSD is recommended (lots of data, easy to back up).
+dataset_root: "/Volumes/External storage/EchoPersona-Data"
+
+# The person Echo mostly talks with. Echo then uses their name only now and then, like people do. Blank = no filtering.
+loved_one_name: ""
+
+personality_file: "config/personality.yaml"   # copy config/personality.example.yaml there and fill it in
+
+llm:
+  model: "llama3.1:8b"    # any Ollama model; with 16 GB, stay around 8B 4-bit so the voice and speech recognition fit

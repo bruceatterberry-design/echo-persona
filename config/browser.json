@@ -1,0 +1,21 @@
+{
+  "_help": "Places Echo opens when asked (\"Hey Echo, open the Weather Channel\"). 'names' are what people say; 'url' opens in Chrome; 'script' runs one of Echo's own scripts instead; 'ask' answers with a question instead of opening anything, and 'answers' maps the reply to a shortcut. To open a page as a particular Google account, add ?authuser=you@gmail.com to its url (that account must be signed in to Chrome). See README for a two-account example.",
+  "shortcuts": [
+    {
+      "say": "the Voice Studio",
+      "names": ["voice studio", "the voice studio", "the studio", "recording studio", "voice recording studio",
+                "the voice recording studio"],
+      "script": "scripts/open_studio.sh"
+    },
+    {
+      "say": "The Weather Channel",
+      "names": ["the weather channel", "weather channel", "the weather", "weather", "the forecast", "weather.com"],
+      "url": "https://weather.com/"
+    },
+    {
+      "say": "YouTube",
+      "names": ["youtube", "you tube"],
+      "url": "https://www.youtube.com/"
+    }
+  ]
+}
