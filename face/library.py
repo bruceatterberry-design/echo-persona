@@ -33,6 +33,13 @@ ATLAS_FRAME_RE = re.compile(r"^(?:[A-Z]-)?[a-z]+-m\d{1,2}-e\d\.jpg$")  # optiona
 MAX_ZIP_BYTES = 4 * 1024**3
 
 
+
+def current_atlas(root: Path) -> Path:
+    """The newest finished atlas (derived/face/atlas-vN with an atlas.json); a half-rendered one is never picked."""
+    face = Path(root) / "derived" / "face"
+    done = [p for p in face.glob("atlas-v*") if re.fullmatch(r"atlas-v\d+", p.name) and (p / "atlas.json").exists()]
+    return max(done, key=lambda p: int(p.name[7:]), default=face / "atlas-v5")
+
 class FaceError(Exception):
     pass
 
@@ -79,7 +86,6 @@ class FaceLibrary:
         self.index_path = self.root / "derived" / "face" / "index-v1.json"
         self.raw = self.root / "raw" / "face"
         self.motion = self.root / "derived" / "face" / "motion-v1"   # idle loops from the owner's own videos
-        self.atlas = self.root / "derived" / "face" / "atlas-v5"   # pre-rendered by face/render_face.py (jaw-driven + head poses)
         self.lock = threading.Lock()
 
     # ---- index ----
@@ -254,6 +260,10 @@ class FaceLibrary:
         if not CROP_RE.match(name):
             raise FaceError("bad crop name")
         return self.crops / name
+
+    @property
+    def atlas(self) -> Path:   # pre-rendered by face/render_face.py (+ face/expression_transfer.py); newest finished one
+        return current_atlas(self.root)
 
     def atlas_meta(self) -> dict | None:
         p = self.atlas / "atlas.json"

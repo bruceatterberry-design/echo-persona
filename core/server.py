@@ -25,6 +25,7 @@ from core.config import ROOT, PersonaConfig, load_config, load_personality
 from core.llm import LLMBackend, make_backend
 from core.schema import StreamParser
 from voice.stt import MAX_AUDIO_BYTES, MLXWhisperSTT, STTBackend, STTError, decode_audio, make_stt
+from face import expressions as face_expressions
 from face.library import FaceError, FaceLibrary
 from transfer import phone_sync
 from processing import ingest
@@ -83,6 +84,10 @@ class FactIn(BaseModel):
 
 class TryIn(BaseModel):
     question: str
+
+
+class SayIn(BaseModel):
+    text: str
 
 
 class RateIn(BaseModel):
@@ -355,6 +360,36 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     def face_review(sha: str, face_i: int, body: FaceReviewIn):
         return face_call(faces.review, sha, face_i, body.status, body.preferred, body.age_label)
 
+    # ---- expressions from the Collector app → the avatar's face (previewed, applied only when the owner clicks) ----
+    @app.get("/api/face/expressions")
+    def face_expr_status():
+        root = cfg.resolve(cfg.dataset_root)
+        return face_expressions.status(root) if root.is_dir() else {"error": "data folder not available"}
+
+    @app.get("/api/face/expressions/{session}/sheet")
+    def face_expr_sheet(session: str):
+        pv = face_expressions.previews(cfg.resolve(cfg.dataset_root))
+        if not face_expressions.SESSION_RE.match(session) or session not in pv:
+            raise HTTPException(404, "no preview for that session")
+        return FileResponse(pv[session] / "expressions-sheet.jpg", media_type="image/jpeg")
+
+    @app.post("/api/face/expressions/{session}/apply")
+    def face_expr_apply(session: str):
+        if not face_expressions.SESSION_RE.match(session):
+            raise HTTPException(400, "bad session")
+        try:
+            started = face_expressions.apply(cfg.resolve(cfg.dataset_root), session)
+        except KeyError:
+            raise HTTPException(404, "no preview for that session")
+        if not started:
+            raise HTTPException(409, "already working on the face")
+        return face_expressions.status(cfg.resolve(cfg.dataset_root))
+
+    @app.post("/api/face/expressions/previews")
+    def face_expr_previews():
+        face_expressions.make_missing_previews(cfg.resolve(cfg.dataset_root))
+        return face_expressions.status(cfg.resolve(cfg.dataset_root))
+
     @app.get("/api/face/atlas")
     def face_atlas():
         return faces.atlas_meta() or {"available": False}
@@ -416,6 +451,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     job["done"].append(rep)
                 if job["done"]:
                     update_personality()   # new own-words answers → new traits to review (decisions are kept)
+                face_expressions.make_missing_previews(root)   # new expression recordings → preview in Avatar Collector
             except Exception as e:
                 job["error"] = type(e).__name__
                 log.warning("phone processing failed: %s", type(e).__name__)
@@ -615,6 +651,31 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     windows: list[WebSocket] = []  # open Echo windows; only the newest one may use the microphone
 
+    @app.post("/api/say")
+    async def say_test(body: SayIn, request: Request):
+        """Test only (scripts/say_test.py): the open window says this text as if the LLM wrote it, so stage-direction
+        cues drive the face. Only from this Mac; not stored in the conversation."""
+        if not request.client or request.client.host not in ("127.0.0.1", "::1"):
+            raise HTTPException(403, "local only")
+        if not windows:
+            raise HTTPException(409, "Echo's window isn't open")
+        sock, parser = windows[-1], StreamParser(allow_name=True)
+        text = body.text.strip()[:2000]
+        for i in range(0, len(text), 8):   # small pieces, like the model streams
+            delta = parser.feed(text[i:i + 8])
+            if delta:
+                await sock.send_json({"type": "delta", "text": delta, "expression": parser.expression,
+                                                  "blinks": parser.blinks})
+            await asyncio.sleep(0.02)
+        reply = parser.finish()
+        if parser.leftover.strip():
+            await sock.send_json({"type": "delta", "text": parser.leftover, "expression": parser.expression,
+                                      "blinks": parser.blinks})
+        await sock.send_json({"type": "reply", "text": reply.text, "expression": reply.expression,
+                              "intensity": reply.intensity})
+        await sock.send_json({"type": "state", "state": "idle"})
+        return {"spoken": reply.text}
+
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
@@ -659,15 +720,18 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     name = cfg.loved_one_name.strip()
                     parser = StreamParser(allow_name=not name or not any(name.lower() in r.lower() for r in recent),
                                           name=name)
+                    parser.ask(text)   # "blink for me" / "smile for me" happen even if the model forgets
                     t_start, t_first = time.perf_counter(), None
                     async for piece in backend.chat_stream(messages):
                         t_first = t_first or time.perf_counter()
                         delta = parser.feed(piece)
                         if delta:  # words go to the window (and the voice) as they are written
-                            await sock.send_json({"type": "delta", "text": delta, "expression": parser.expression})
+                            await sock.send_json({"type": "delta", "text": delta, "expression": parser.expression,
+                                                  "blinks": parser.blinks})
                     reply = parser.finish()
                     if parser.leftover.strip():
-                        await sock.send_json({"type": "delta", "text": parser.leftover, "expression": parser.expression})
+                        await sock.send_json({"type": "delta", "text": parser.leftover, "expression": parser.expression,
+                                      "blinks": parser.blinks})
                 except Exception as e:  # keep the UI alive if the backend fails
                     log.warning("llm error: %s", type(e).__name__)
                     await sock.send_json({"type": "error", "message": "My thinking engine isn't responding. Is Ollama running?"})
@@ -687,6 +751,14 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         finally:
             if sock in windows:
                 windows.remove(sock)
+
+    @app.middleware("http")
+    async def fresh_pages(request: Request, call_next):
+        """Pages always check for a newer copy, so a reload after an update never runs old code."""
+        resp = await call_next(request)
+        if resp.headers.get("content-type", "").startswith("text/html"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
     app.mount("/", StaticFiles(directory=ROOT / "renderer", html=True), name="ui")
     return app

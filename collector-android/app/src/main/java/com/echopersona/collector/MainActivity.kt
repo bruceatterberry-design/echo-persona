@@ -79,8 +79,9 @@ fun App(store: Store) {
     var refresh by remember { mutableIntStateOf(0) }
     when (screen) {
         "consent" -> Consent(store) { screen = "home" }
-        "home" -> Home(store, refresh) { screen = "session" }
+        "home" -> Home(store, refresh, { screen = "expressions" }) { screen = "session" }
         "session" -> SessionScreen(store) { refresh++; screen = "home" }
+        "expressions" -> SessionScreen(store, expressions = true) { refresh++; screen = "home" }
     }
 }
 
@@ -98,7 +99,7 @@ fun Consent(store: Store, done: () -> Unit) {
 }
 
 @Composable
-fun Home(store: Store, refresh: Int, start: () -> Unit) {
+fun Home(store: Store, refresh: Int, expressions: () -> Unit, start: () -> Unit) {
     val ctx = LocalContext.current
     val recovered = remember(refresh) { store.recoverOpenSessions() }
     var times by remember { mutableStateOf(Reminders.times(ctx)) }
@@ -139,6 +140,9 @@ fun Home(store: Store, refresh: Int, start: () -> Unit) {
         Button(start, enabled = !paused, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text(if (paused) "Collection paused" else "Start a session (about 15 min)", fontSize = 17.sp)
         }
+        OutlinedButton(expressions, enabled = !paused, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("Record my expressions (joy, surprised, sad, angry, bewildered · about 3 min)", fontSize = 15.sp)
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(paused, { paused = it; store.paused = it }); Spacer(Modifier.width(10.dp)); Text("Pause collection", color = TextC)
         }
@@ -158,7 +162,7 @@ fun Home(store: Store, refresh: Int, start: () -> Unit) {
         }
         if (free) OutlinedButton({ freed = store.freeVerifiedSpace() }) { Text("Free up space now") }
         freed?.let { Text("Removed $it verified recording(s) from the phone. The Mac keeps the originals.", color = Good, fontSize = 13.sp) }
-        Text("To copy recordings to the Mac: plug this phone into the Mac with a USB cable, then click \"Copy from phone\" in Echo's Voice Studio.",
+        Text("To copy recordings to the Mac: plug this phone into the Mac with a USB cable, then click \"Copy from phone\" in Avatar Collector on the Mac. Expression sessions become a preview there for your avatar's face.",
             color = Dim, fontSize = 13.sp)
     }
 }
@@ -178,11 +182,11 @@ private fun keptTaskIds(store: Store): Set<String> {
 
 @SuppressLint("MissingPermission")
 @Composable
-fun SessionScreen(store: Store, exit: () -> Unit) {
+fun SessionScreen(store: Store, expressions: Boolean = false, exit: () -> Unit) {
     val ctx = LocalContext.current
     val activity = ctx as MainActivity
     val lifecycle = LocalLifecycleOwner.current
-    val plan = remember { Plan.session(ctx, keptTaskIds(store)) }
+    val plan = remember { if (expressions) Plan.expressions() else Plan.session(ctx, keptTaskIds(store)) }
     val session = remember { store.newSession() }
     var i by remember { mutableIntStateOf(0) }
     var recording by remember { mutableStateOf(false) }

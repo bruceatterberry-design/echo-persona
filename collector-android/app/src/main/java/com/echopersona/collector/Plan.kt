@@ -35,6 +35,25 @@ object Plan {
         Task("photo-right", Kind.PHOTO, "photo", "Photo: turned a little right", "Turn your head a little to your right, eyes on the camera.", 0, "neutral"),
     )
 
+    // Stronger feelings for the avatar's face. Each: a sharp still, then a short video that goes
+    // from relaxed to the full expression and back, so the Mac sees every strength in between.
+    private val EMOTIONS = listOf(
+        Triple("joy", "Joy", "Think of a really happy moment with someone you love and let it all show: a big, open smile or a laugh."),
+        Triple("surprised", "Surprised", "Imagine walking into a surprise party: eyebrows up, eyes wide, mouth a little open."),
+        Triple("sad", "Sad", "Think of something that makes you sad, like missing someone. Let your face soften and drop."),
+        Triple("angry", "Angry", "Imagine someone was rude to a person you love. Lower and pull in your brows, tighten your jaw, eyes on the camera."),
+        Triple("bewildered", "Bewildered", "Imagine someone explained something that makes no sense at all: brows up and together, a puzzled tilt."),
+    )
+
+    /** About 3 minutes: for each feeling, one photo holding it, then a video from relaxed → full → relaxed. */
+    fun expressions(): List<Task> = EMOTIONS.flatMap { (label, title, how) ->
+        listOf(
+            Task("photo-$label", Kind.PHOTO, "photo", "Photo: $title", "$how Hold it while you take the photo.", 0, label),
+            Task("face-$label", Kind.FACE, "face", "$title (video)",
+                "Start relaxed. Slowly make the face, hold it for a few seconds, then relax again. $how", 10, label),
+        )
+    }
+
     fun prompts(context: Context): List<Task> {
         val arr = JSONArray(context.assets.open("prompts.json").bufferedReader().readText())
         return (0 until arr.length()).map { i ->

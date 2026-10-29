@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
-Expression = Literal["neutral", "smiling", "thoughtful", "attentive", "concerned"]
+Expression = Literal["neutral", "smiling", "thoughtful", "attentive", "concerned",
+                     "joy", "surprised", "sad", "angry", "bewildered"]   # last 5: carried from the owner's own recordings
 
 RESPONSE_JSON_SCHEMA = {
     "type": "object",
@@ -60,6 +61,21 @@ class StreamParser:
         self.tag_done = False
         self.text = ""
         self.leftover = ""
+        self.asked_blinks = 0          # blinks owed because someone asked ("blink for me")
+        self.asked_expression: str | None = None   # "smile for me": shown even if the model's tag says otherwise
+
+    def ask(self, user_text: str) -> None:
+        """Blink / smile on request, whatever the model writes (it often forgets the cue)."""
+        t = user_text.lower()
+        if re.search(r"\bblink", t):
+            self.asked_blinks = 1
+        if re.search(r"\bsmil(e|ing)\b", t):
+            self.asked_expression = self.expression = "smiling"
+
+    @property
+    def blinks(self) -> int:
+        """Blinks so far in this reply (cues like "(blinks)" plus a requested one); the face blinks as each is heard."""
+        return self.asked_blinks + getattr(getattr(self, "_af", None), "blinks", 0) + getattr(self, "_tag_blinks", 0)
 
     def feed(self, piece: str) -> str:
         """Returns the new text to show and speak (tag and stage directions removed)."""
@@ -89,8 +105,11 @@ class StreamParser:
                 stripped = stripped[m.end():]
             elif m:   # another one-word stage direction, e.g. "[smiles]": map it if we can
                 self.expression = action_expression(m.group(1)) or self.expression
+                self._tag_blinks = int(is_blink(m.group(1)))
                 stripped = stripped[m.end():]
             self.tag_done = True
+            if self.asked_expression:
+                self.expression = self.asked_expression
         else:
             return ""
         return stripped
@@ -107,19 +126,39 @@ class StreamParser:
                             intensity=0.0 if self.expression == "neutral" else 0.3)
 
 
-# Stage directions the model sometimes writes ("[smiles]", "*chuckles softly*"). They are not spoken or shown;
-# they become an expression on the avatar instead.
-ACTION_WORDS = {
-    "smiling": ("smil", "grin", "laugh", "chuckl", "beam", "wink", "happ", "warm", "giggl"),
+# Stage directions the model sometimes writes ("[smiles]", "*chuckles softly*", "(laughs)"). They are facial cues
+# only: never spoken or shown, they become an expression on the avatar instead (a firm rule: cues must never be read out).
+ACTION_WORDS = {   # order matters: the first match wins ("smiles gently" is a smile, "frowns angrily" is angry)
+    "joy": ("joy", "laugh", "excit", "delight", "beam", "giggl", "thrill", "cheer", "overjoy"),
+    "surprised": ("surpris", "supris", "shock", "amaz", "gasp", "astonish", "startl", "wide-eyed", "wow"),
+    "bewildered": ("bewilder", "baffl", "puzzl", "confus", "perplex", "befuddl", "scratch"),
+    "angry": ("angr", "anger", "mad", "furious", "annoy", "frustrat", "glar", "scowl", "irritat", "grit"),
+    "sad": ("sad", "cry", "tear", "sorrow", "unhapp", "gloom", "heartbr", "downcast", "sniff"),
+    "smiling": ("smil", "grin", "wink", "happ", "warm"),
     "thoughtful": ("think", "ponder", "paus", "hmm", "consider", "reflect", "wonder", "recall", "rememb"),
-    "concerned": ("concern", "worr", "frown", "sigh", "sad", "sorry", "gentl", "soft"),
-    "attentive": ("nod", "listen", "lean", "attent", "tilt", "surpris", "raise", "eyebrow", "look"),
+    "concerned": ("concern", "worr", "frown", "sigh", "sorry", "gentl", "soft"),
+    "attentive": ("nod", "listen", "lean", "attent", "tilt", "raise", "eyebrow", "look", "curious", "interest"),
 }
 MAX_ACTION = 120   # an unclosed [ or * longer than this is ordinary text
 
 
+def is_blink(inner: str) -> bool:
+    return bool(re.search(r"\b(blink|wink)", inner.lower()))
+
+
+def looks_like_cue(inner: str) -> bool:
+    """(blinks) (leans in close) (blurts eyes shut, then opens them) are cues; (the blue one) (about 2 hours) are text."""
+    t = inner.strip()
+    if not re.fullmatch(r"[a-z][a-z ,'-]*", t):   # starts lowercase, no digits or capitals
+        return False
+    words = t.replace(",", " ").split()
+    return len(words) <= 2 or bool(re.fullmatch(r"[a-z]+(s|ing)", words[0]) and words[0] not in ("this", "is", "was", "has", "his", "its", "nothing", "something", "everything", "thing", "things", "morning", "evening"))
+
+
 def action_expression(inner: str) -> str | None:
     t = inner.lower()
+    if t.strip() in Expression.__args__:      # "(sad)", "[angry]": the feeling's own name
+        return t.strip()
     for expr, stems in ACTION_WORDS.items():   # order matters: "smiles gently" is a smile
         if any(re.search(rf"\b{st}", t) for st in stems):
             return expr
@@ -132,25 +171,35 @@ class ActionFilter:
     def __init__(self) -> None:
         self.hold = ""
         self.last = ""   # last character sent, so a removed direction never leaves a double space
+        self.cut = False  # a direction was just removed; punctuation in the next piece closes up to the word before
+        self.blinks = 0   # "(blinks)" / "*winks*": the face blinks; never spoken
 
     def feed(self, piece: str, final: bool = False) -> tuple[str, str | None]:
-        text, expr, out = self.hold + piece, None, []
+        text, expr, out, cut, after_cut = self.hold + piece, None, [], self.cut, None
         self.hold = ""
         i = 0
         while i < len(text):
             ch = text[i]
-            if ch in "[*":
-                close = "]" if ch == "[" else "*"
+            if ch in "[*(":
+                close = {"[": "]", "*": "*", "(": ")"}[ch]
                 j = text.find(close, i + 1)
                 if j < 0:                                    # not closed yet: wait for more text
                     if not final and len(text) - i <= MAX_ACTION:
                         self.hold = text[i:]
                         break
-                    out.append(text[i:] if ch == "*" else text[i + 1:]); break
+                    out.append(text[i + 1:] if ch == "[" else text[i:]); break
                 inner = text[i + 1:j]
                 e = action_expression(inner)
-                if ch == "[" or e or len(inner.split()) > 3:  # a stage direction: drop it
-                    expr = e or expr
+                if is_blink(inner) and (ch != "(" or e or looks_like_cue(inner)) and (ch != "*" or len(inner.split()) <= 3):
+                    self.blinks += 1
+                    e = e or "__blink"
+                if ch == "(":                                 # (smiles) is a cue for the face; (the blue one) is text
+                    if e or looks_like_cue(inner):
+                        expr, cut, after_cut = (e if e != "__blink" else None) or expr, True, len(out)
+                    else:
+                        out.append(text[i:j + 1])
+                elif ch == "[" or e or len(inner.split()) > 3:  # a stage direction: drop it
+                    expr, cut, after_cut = (e if e != "__blink" else None) or expr, True, len(out)
                 else:                                         # *really* is emphasis: keep the words
                     out.append(inner)
                 i = j + 1
@@ -158,6 +207,13 @@ class ActionFilter:
             out.append(ch)
             i += 1
         clean = re.sub(r"[ \t]{2,}", " ", "".join(out))
+        if cut:                                               # "Hey (smiles)." → "Hey." not "Hey ."
+            clean = re.sub(r"[ \t]+([.,!?;:])", r"\1", clean)
+        if not final:                                         # a trailing space waits: a cue may follow it
+            tail = len(clean) - len(clean.rstrip(" \t"))
+            if tail:
+                self.hold, clean = clean[-tail:] + self.hold, clean[:-tail]
+        self.cut = after_cut is not None and not "".join(out[after_cut:]).strip()   # cue at the very end
         if self.last in (" ", "") and clean.startswith(" "):
             clean = clean.lstrip(" ")
         if clean:

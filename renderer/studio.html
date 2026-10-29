@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Voice Studio</title>
+<title>Avatar Collector</title>
 <style>
   :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
           --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
@@ -47,7 +47,7 @@
 </head>
 <body>
 <header>
-  <h1>VOICE STUDIO</h1>
+  <h1>AVATAR COLLECTOR</h1>
   <div class="row"><span id="recDot">● RECORDING</span><span id="micState" class="hint">Mic off</span><a href="/">← Back to Echo</a></div>
 </header>
 <main>
@@ -99,6 +99,11 @@
       <div class="row" style="justify-content:space-between;margin-bottom:8px"><b style="font-weight:400">Phone recordings (Echo Persona Collector)</b><span class="hint" id="phoneStat"></span></div>
       <p class="hint" style="margin-top:0">Plug the phone into the Mac with a USB cable, then click below. Every file is checked against its fingerprint before the phone is told it was copied safely.</p>
       <div class="row"><button id="phoneBtn">Copy from phone</button><span id="phoneMsg" class="hint"></span></div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px"><b style="font-weight:400">Expressions → your avatar's face</b><span class="hint" id="exprStat"></span></div>
+      <p class="hint" style="margin-top:0">"Record my expressions" sessions from the phone are turned into a preview automatically after copying: your movement from relaxed to joy, surprised, sad, angry and bewildered, carried onto your avatar's face (everything else about the photo stays). Nothing changes on the face until you click "Put on the avatar's face". It uses the same choices every time (config/face_expressions.json).</p>
+      <div id="exprList"></div>
     </div>
   </section>
 </main>
@@ -256,6 +261,33 @@ document.addEventListener('keydown', e => {
   else if (k === 'p' && !$('playBtn').disabled) $('playBtn').click();
   else if (k === 's' && !recording) next();
 });
+async function exprStatus() {
+  const r = await fetch('/api/face/expressions'), j = await r.json().catch(() => ({}));
+  if (!r.ok || j.error) { $('exprStat').textContent = j.error || ''; return; }
+  const busy = j.job.running;
+  $('exprStat').textContent = `Face now: ${j.atlas} · ${j.expressions.length} expressions` +
+    (busy ? (j.job.what === 'apply' ? ' · putting expressions on the face (10–15 min)…' : ' · making a preview…') : '') +
+    (j.job.error ? ' · last try failed: ' + j.job.error : '');
+  const list = $('exprList'); list.innerHTML = '';
+  if (!j.sessions.length) list.innerHTML = '<p class="hint">No expression sessions yet. On the phone: "Record my expressions".</p>';
+  for (const s of j.sessions.slice().reverse()) {
+    const row = document.createElement('div'); row.className = 'row'; row.style.margin = '6px 0';
+    const name = document.createElement('span'); name.textContent = s.session; row.appendChild(name);
+    if (!s.preview) { const h = document.createElement('span'); h.className = 'hint'; h.textContent = busy ? 'preview being made…' : 'no preview yet'; row.appendChild(h); }
+    else {
+      const a = document.createElement('a'); a.href = `/api/face/expressions/${s.session}/sheet`; a.target = '_blank'; a.textContent = 'See preview'; row.appendChild(a);
+      if (s.on_face) { const h = document.createElement('span'); h.style.color = 'var(--good)'; h.textContent = '✓ on the avatar\'s face'; row.appendChild(h); }
+      else {
+        const b = document.createElement('button'); b.textContent = 'Put on the avatar\'s face'; b.disabled = busy;
+        b.onclick = async () => { b.disabled = true; await fetch(`/api/face/expressions/${s.session}/apply`, { method: 'POST' }); exprStatus(); };
+        row.appendChild(b);
+      }
+    }
+    list.appendChild(row);
+  }
+  if (!busy && j.sessions.some(s => !s.preview)) fetch('/api/face/expressions/previews', { method: 'POST' }).then(() => setTimeout(exprStatus, 1500));
+  if (busy) setTimeout(exprStatus, 5000);
+}
 async function phoneStatus() {
   try { const s = await (await fetch('/api/phone/status')).json();
     $('phoneStat').textContent = s.error ? s.error : `${s.sessions} sessions · ${s.kept_minutes} min kept` + (s.last ? ` · last ${s.last.slice(0, 8)}` : ''); } catch {}
@@ -271,9 +303,9 @@ $('phoneBtn').onclick = async () => {
       (failed.length ? `. Problems: ${failed.map(([s, e]) => s + ': ' + e).join('; ')} (try again)` : '.');
     $('phoneMsg').style.color = failed.length ? 'var(--warn)' : 'var(--good)';
   } catch (e) { $('phoneMsg').textContent = e.message; $('phoneMsg').style.color = 'var(--err)'; }
-  $('phoneBtn').disabled = false; phoneStatus();
+  $('phoneBtn').disabled = false; phoneStatus(); setTimeout(exprStatus, 3000);
 };
-phoneStatus();
+phoneStatus(); exprStatus();
 document.addEventListener('click', e => { const b = e.target.closest('button'); b && b.blur(); });  // keys go to the studio, not the last button
 init();
 </script>

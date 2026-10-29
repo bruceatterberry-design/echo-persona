@@ -132,4 +132,4 @@ def test_api_full_flow(tmp_path):
     assert c.get("/api/studio/status").json()["stats"]["kept_prompt_ids"] == ["calm-01"]
     bad = c.post(f"/api/studio/take?session={sid}&prompt_id=calm-02", content=b"not a wav")
     assert bad.status_code == 400
-    assert "VOICE STUDIO" in c.get("/studio.html").text
+    assert "AVATAR COLLECTOR" in c.get("/studio.html").text

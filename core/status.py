@@ -81,7 +81,8 @@ def data(store, dataset_root: Path, pdir: Path) -> dict:
         sessions = sorted(p.name for p in phone.iterdir() if (p / "receipt.json").exists()) if phone.is_dir() else []
         out["phone_sessions"] = len(sessions)
         out["last_phone_session"] = sessions[-1] if sessions else None
-        atlas = dataset_root / "derived/face/atlas-v5/atlas.json"
+        from face.library import current_atlas
+        atlas = current_atlas(dataset_root) / "atlas.json"
         out["face_frames"] = len(json.loads(atlas.read_text())["frames"]) if atlas.exists() else 0
     except Exception:
         pass

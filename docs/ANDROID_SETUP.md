@@ -18,7 +18,7 @@ only CAMERA and RECORD_AUDIO).
 - Each session starts with 2 full-resolution photos (the front camera records video at only 640×480 on the phone).
 
 ## Copying to the Mac
-Plug in the USB cable → Echo's **Voice Studio** page → **Copy from phone**. Each session is pulled, every file is checked
+Plug in the USB cable → Echo's **Avatar Collector** page → **Copy from phone**. Each session is pulled, every file is checked
 against its SHA-256 fingerprint, stored read-only under `raw/phone/<session>/` on the external SSD, and a receipt is written
 back to the phone. Interrupted copies are simply redone next time. The phone deletes media only if you turn on
 "Free up space after the Mac has verified a copy", and only for files the Mac verified byte-for-byte.

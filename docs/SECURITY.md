@@ -67,7 +67,7 @@ that matters (see BACKUP_AND_RECOVERY.md). Its password is chosen when it's firs
 documentation only.
 
 ## Consent and control
-- Recording happens only when someone presses Record (Voice Studio, phone app). A red indicator shows whenever a
+- Recording happens only when someone presses Record (Avatar Collector, phone app). A red indicator shows whenever a
   microphone or camera is on. "Hey Echo" mode keeps the mic open but discards anything without the wake phrase
   (never shown, stored or logged).
 - Nothing becomes a *fact* automatically: only "remember that…", the memory panel, or a fact the owner saved in How I talk.

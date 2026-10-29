@@ -1,8 +1,20 @@
 #!/bin/zsh
-# Build /Applications/Voice Studio.app (opens the Voice Recording Studio), give it your face with a
-# red mic badge as its icon, and put it on the Dock. Safe to run again.
+# Build /Applications/Avatar Collector.app (opens the Avatar Collector page: voice recording, phone copy, expressions),
+# give it your face with a red mic badge as its icon, and put it on the Dock. Safe to run again.
+# (Was "Voice Studio" before v0.2.0; the old app and its Dock tile are removed.)
 set -e
-ROOT="${0:A:h:h}"; A="/Applications/Voice Studio.app"; T=$(mktemp -d)
+ROOT="${0:A:h:h}"; A="/Applications/Avatar Collector.app"; T=$(mktemp -d)
+OLD="/Applications/Voice Studio.app"
+if [[ -d "$OLD" ]]; then
+  rm -rf "$OLD"
+  python3 - <<'PY'   # drop the old Dock tile
+import plistlib, subprocess
+raw = subprocess.run(["defaults", "export", "com.apple.dock", "-"], capture_output=True, check=True).stdout
+d = plistlib.loads(raw)
+d["persistent-apps"] = [a for a in d.get("persistent-apps", []) if "/Voice%20Studio.app" not in str(a)]
+subprocess.run(["defaults", "import", "com.apple.dock", "-"], input=plistlib.dumps(d), check=True)
+PY
+fi
 chmod +x "$ROOT/scripts/open_studio.sh"
 rm -rf "$A"
 osacompile -o "$A" -e "do shell script quoted form of \"$ROOT/scripts/open_studio.sh\" & \" > /dev/null 2>&1 &\""
@@ -33,9 +45,9 @@ fi
 codesign --force --deep -s - "$A" 2>/dev/null
 touch "$A"; /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$A"
 # Add to the Dock unless it's already there.
-if ! defaults read com.apple.dock persistent-apps | grep -q "/Voice%20Studio.app"; then
+if ! defaults read com.apple.dock persistent-apps | grep -q "Avatar%20Collector.app"; then
   defaults write com.apple.dock persistent-apps -array-add \
     "<dict><key>tile-data</key><dict><key>file-data</key><dict><key>_CFURLString</key><string>file://${A// /%20}/</string><key>_CFURLStringType</key><integer>15</integer></dict></dict></dict>"
 fi
 killall Dock 2>/dev/null || true
-rm -rf "$T"; echo "  Voice Studio is on the Dock"
+rm -rf "$T"; echo "  Avatar Collector is on the Dock"

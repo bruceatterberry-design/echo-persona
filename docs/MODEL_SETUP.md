@@ -13,7 +13,7 @@ photo, approved personality traits) that can be changed without retraining.
 | Face finding | Apple Vision (built into macOS) | — | — | `scripts/build_face_tools.sh` |
 
 ## How your likeness is made
-- **Voice:** zero-shot cloning from one 5–12 s Voice Studio recording. `scripts/make_voice_reference.py` picks the cleanest
+- **Voice:** zero-shot cloning from one 5–12 s Avatar Collector recording. `scripts/make_voice_reference.py` picks the cleanest
   kept take in a few categories, copies it to `derived/voice/refs-v1/ref-<category>.wav` (+ transcript in `refs.json`) and
   sets `config/voice.json`. Try another with `uv run python scripts/make_voice_reference.py factual`, then restart the voice service.
 - **Face:** LivePortrait renders frames from one photo (the face you mark as preferred on the "My face" page):

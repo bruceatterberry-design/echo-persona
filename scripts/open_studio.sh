@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Open the Voice Recording Studio once Echo is awake. Used by the "Voice Studio" app.
+# Open Avatar Collector (voice recording, phone copy, expressions) once Echo is awake. Used by the "Avatar Collector" app.
 ROOT="${0:A:h:h}"
 for label in com.echopersona.ollama com.echopersona.voice com.echopersona.stt com.echopersona.core; do   # make sure the background parts are running
   launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/$label.plist 2>/dev/null

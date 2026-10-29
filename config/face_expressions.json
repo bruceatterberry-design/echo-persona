@@ -1,0 +1,36 @@
+{
+  "chosen_by": "Defaults: B = expression photo at 100%, C = strongest video frame. Pick yours from derived/face/expressions-*/expressions-sheet.jpg.",
+  "choices": {
+    "joy": {
+      "from": "photo",
+      "strength": 1.0,
+      "mouth_rest": 1.0,
+      "mouth_talking": 1.0
+    },
+    "surprised": {
+      "from": "photo",
+      "strength": 1.0,
+      "mouth_rest": 1.0,
+      "mouth_talking": 1.0
+    },
+    "sad": {
+      "from": "photo",
+      "strength": 1.0,
+      "mouth_rest": 1.0,
+      "mouth_talking": 1.0
+    },
+    "angry": {
+      "from": "photo",
+      "strength": 1.0,
+      "mouth_rest": 1.0,
+      "mouth_talking": 1.0
+    },
+    "bewildered": {
+      "from": "video",
+      "strength": 1.0,
+      "mouth_rest": 0.3,
+      "mouth_talking": 0.3
+    }
+  },
+  "mouth_note": "Share of the recorded mouth movement kept (1.0 = as recorded). Lower it if a feeling's mouth looks open too wide."
+}

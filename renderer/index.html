@@ -65,7 +65,7 @@
   <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span></div>
 </section>
 <section id="side">
-  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Record my voice</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
+  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
   <div id="log" aria-live="polite"></div>
   <form id="f"><input type="text" id="q" placeholder="Talk to Echo…" autocomplete="off" aria-label="Message"><button type="button" id="micBtn" title="Click, or hold Space, to talk" aria-label="Talk">🎙</button><button>Send</button></form>
 </section>
@@ -132,7 +132,7 @@ async function loadFace() {   // true when finished (face loaded, or an atlas th
     if (!meta.frames) return false;   // e.g. the external SSD isn't mounted yet at login
     await Promise.all(Object.entries(meta.frames).map(([k, path]) => new Promise((res, rej) => {
       const im = new Image(); im.onload = () => { P.img[k] = im; res(); }; im.onerror = rej;
-      im.src = '/api/face/atlas/frames/' + path.split('/').pop();
+      im.src = '/api/face/atlas/frames/' + path.split('/').pop() + '?v=' + (meta.version || 0);   // new atlas → fresh frames
     })));
     if (!meta.visemes) return true;   // older atlas without mouth shapes
     P.meta = meta; P.poses = !!meta.poses; P.ready = true;
@@ -342,11 +342,17 @@ async function speakOwn(text) {
 }
 // ---------- streaming voice: speak while the reply is still being written ----------
 // Text arrives in pieces (deltas). Complete phrases are sent one at a time to the voice service, whose audio
-// streams back as raw PCM and is scheduled back-to-back on one AudioContext, so there are no gaps.
-const V = { gen: 0, pending: '', queue: [], ended: false, pumping: false, ctx: null, nextTime: 0, abort: null, full: '', chunks: 0, failed: false };
+// streams back as raw PCM and is scheduled back-to-back on one AudioContext.
+// The voice is made only ~1.3x faster than it plays (slower while the Mac is busy), so after any silence audio is
+// held until V.lead seconds are ready (jitter buffer). A gap mid-reply raises the lead; a reply without gaps lowers it.
+const LEAD_MIN = 0.7, LEAD_MAX = 2.0;
+const V = { gen: 0, pending: '', queue: [], ended: false, pumping: false, ctx: null, nextTime: 0, abort: null, full: '', chunks: 0, failed: false,
+            lead: LEAD_MIN, started: false, gaps: 0, expr: 'neutral', blinks: 0, blinked: 0 };
+// A blink on request or from a "(blinks)" cue: blink now, then carry on with the natural rhythm.
+function blinkNow() { const now = performance.now(); P.blinkAt = now; P.nextBlink = now + 2500 + Math.random() * 4000; S.blink = 1; }
 const useOwn = () => $('speak').checked && $('voice').value === OWN;
 function voiceStop() {
-  V.gen++; V.pending = ''; V.queue = []; V.ended = false; V.full = ''; V.chunks = 0; V.failed = false;
+  V.gen++; V.pending = ''; V.queue = []; V.ended = false; V.full = ''; V.chunks = 0; V.failed = false; V.started = false; V.gaps = 0; V.expr = 'neutral'; V.blinks = 0; V.blinked = 0;
   if (V.abort) { V.abort.abort(); V.abort = null; }
   if (V.ctx) { V.ctx.close(); V.ctx = null; V.an = null; }
 }
@@ -375,7 +381,7 @@ function takeChunks(final) {
 }
 function voiceFeed(delta, final = false) {
   V.full += delta; V.pending += delta;
-  for (const c of takeChunks(final)) V.queue.push(c);
+  for (const c of takeChunks(final)) V.queue.push({ text: c, expr: V.expr, blinks: V.blinks });   // each phrase keeps its own face
   if (final) V.ended = true;
   voicePump();
 }
@@ -383,7 +389,7 @@ async function voicePump() {
   if (V.pumping) return;
   V.pumping = true; const gen = V.gen;
   try {
-    while (V.queue.length && gen === V.gen) await voicePlay(V.queue.shift(), gen);
+    while (V.queue.length && gen === V.gen) { const q = V.queue.shift(); await voicePlay(q.text, gen, q.expr, q.blinks); }
   } catch (e) {
     if (gen === V.gen && !V.failed) {   // voice service trouble: say the rest with the stand-in voice
       V.failed = true; add('My own voice isn’t available right now, so I’m using the stand-in voice.', 'note');
@@ -395,10 +401,12 @@ async function voicePump() {
   if (V.queue.length) return voicePump();
   if (V.ended) {  // everything scheduled: go idle when the last sound finishes
     const left = V.ctx ? Math.max(0, V.nextTime - V.ctx.currentTime) : 0;
+    if (V.gaps) console.info(`voice: ${V.gaps} gap(s), lead now ${V.lead.toFixed(1)} s`);
+    else V.lead = Math.max(LEAD_MIN, V.lead - 0.1);
     setTimeout(() => { if (gen === V.gen) { ownSpeaking = false; setState('idle'); } }, left * 1000 + 150);
   }
 }
-async function voicePlay(text, gen) {
+async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
   if (!V.ctx) {
     V.ctx = new AudioContext(); V.nextTime = 0;
     V.an = V.ctx.createAnalyser(); V.an.fftSize = 1024; V.an.smoothingTimeConstant = 0;  // drives the mouth shapes
@@ -411,7 +419,26 @@ async function voicePlay(text, gen) {
                                              body: JSON.stringify({ text }), signal: V.abort.signal });
   if (!r.ok) throw new Error('voice service');
   const rate = +r.headers.get('X-Sample-Rate') || 24000, reader = r.body.getReader();
-  let carry = null;
+  let carry = null, hold = [], held = 0, faceSet = false;
+  const flush = () => {
+    if (!faceSet && hold.length) {   // the face changes when this phrase is heard, not when it was written
+      faceSet = true; const at = Math.max(V.nextTime, V.ctx.currentTime + 0.06);
+      setTimeout(() => {
+        if (gen !== V.gen) return;
+        S.expr = expr; S.intensity = expr === 'neutral' ? 0 : 0.3;
+        if (blinks > V.blinked) { V.blinked = blinks; blinkNow(); }
+      },
+                 (at - V.ctx.currentTime) * 1000);
+    }
+    for (const f of hold) {
+      const now = V.ctx.currentTime, after = V.nextTime < now + 0.06;   // starting after silence
+      if (after) for (let i = 0, n = Math.min(120, f.length); i < n; i++) f[i] *= i / n;   // 5 ms fade-in, no click
+      const buf = V.ctx.createBuffer(1, f.length, rate); buf.copyToChannel(f, 0);
+      const src = V.ctx.createBufferSource(); src.buffer = buf; src.connect(V.an);
+      const at = after ? now + 0.06 : V.nextTime; src.start(at); V.nextTime = at + buf.duration;
+    }
+    hold = []; held = 0; V.started = true;
+  };
   for (;;) {
     const { value, done } = await reader.read();
     if (done || gen !== V.gen) break;
@@ -421,10 +448,12 @@ async function voicePlay(text, gen) {
     if (!bytes.length) continue;
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2), f = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
-    const buf = V.ctx.createBuffer(1, f.length, rate); buf.copyToChannel(f, 0);
-    const src = V.ctx.createBufferSource(); src.buffer = buf; src.connect(V.an);
-    const at = Math.max(V.nextTime, V.ctx.currentTime + 0.06); src.start(at); V.nextTime = at + buf.duration;
+    const playing = V.nextTime > V.ctx.currentTime + 0.06;
+    if (!playing && !hold.length && V.started) { V.gaps++; V.lead = Math.min(LEAD_MAX, V.lead + 0.3); }  // ran dry
+    hold.push(f); held += f.length / rate;
+    if (playing || held >= V.lead) flush();
   }
+  if (gen === V.gen && hold.length) flush();   // a short phrase ends before the lead fills
 }
 function speak(text) {
   if (!$('speak').checked) { setState('idle'); return; }
@@ -459,13 +488,16 @@ function connect() {
     const m = JSON.parse(ev.data);
     if (m.type === 'state' && !(m.state === 'idle' && S.state === 'speaking')) setState(m.state);
     if (m.type === 'delta') {
-      if (!live) { live = document.createElement('div'); live.className = 'm'; $('log').appendChild(live); if (useOwn()) voiceBegin(); }
+      if (!live) { live = document.createElement('div'); live.className = 'm'; $('log').appendChild(live); V.blinked = 0; if (useOwn()) voiceBegin(); }
       live.textContent += m.text; $('log').scrollTop = 1e9;
-      S.expr = m.expression; S.intensity = m.expression === 'neutral' ? 0 : 0.3;
-      if (useOwn() && !V.failed) voiceFeed(m.text);
+      if (useOwn() && !V.failed) { V.expr = m.expression; V.blinks = m.blinks || 0; voiceFeed(m.text); }   // face follows the voice
+      else {
+        S.expr = m.expression; S.intensity = m.expression === 'neutral' ? 0 : 0.3;
+        if ((m.blinks || 0) > V.blinked) { V.blinked = m.blinks; blinkNow(); }
+      }
     }
     if (m.type === 'reply') {
-      S.expr = m.expression; S.intensity = m.intensity;
+      if (!(live && useOwn() && V.failed !== true)) { S.expr = m.expression; S.intensity = m.intensity; }
       if (live) { live.textContent = m.text; const t = document.createElement('div'); t.className = 'meta'; t.textContent = m.expression; live.appendChild(t); }
       else add(m.text, '', m.expression);
       if (live && useOwn() && V.failed !== true) {

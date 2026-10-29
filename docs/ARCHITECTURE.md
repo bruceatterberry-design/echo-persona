@@ -19,7 +19,7 @@ an Android phone for collection. No cloud services at runtime.
    │  conversation: base personality + the owner-approved traits + 2 of their real sentences + memories       │
    │  streaming reply parser: expression tag, stage directions → avatar expression (never spoken)       │
    │  memory: SQLite (facts/preferences, confirmed vs inferred, FTS search) + conversation log          │
-   │  pages: Voice Studio, Face Library, How I talk, memory panel; phone copy + processing jobs         │
+   │  pages: Avatar Collector, Face Library, How I talk, memory panel; phone copy + processing jobs         │
    └──────┬────────────────────────────┬──────────────────────────────┬────────────────────────────────┘
           │ /api/chat (stream)          │ /stream (PCM)                │ adb over USB
    ┌──────▼─────────┐         ┌─────────▼──────────────┐       ┌───────▼──────────────────────────────┐
