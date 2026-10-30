@@ -46,7 +46,7 @@
     <p class="hint" id="intro"></p>
     <div class="stats" id="stats"></div>
   </div>
-  <div class="tabs"><button data-tab="traits" class="on">Traits</button><button data-tab="facts">Facts about you</button><button data-tab="try">Try it</button></div>
+  <div class="tabs"><button data-tab="traits" class="on">Traits</button><button data-tab="facts">Facts about you</button><button data-tab="try">Try it</button><button data-tab="checks">Checks</button><button data-tab="versions">Versions</button></div>
 
   <section id="tab-traits">
     <p class="hint">Each trait comes with the words you actually said. <b>Approve</b> the ones that are really you (edit the wording if you like); <b>Reject</b> anything that isn't. Only approved traits shape how Echo talks, and changes take effect immediately.</p>
@@ -75,6 +75,25 @@
       <div class="row" style="margin-top:8px"><button id="ask">Ask Echo</button><span class="hint" id="askState"></span></div>
       <div id="answers"></div>
     </div>
+  </section>
+  <section id="tab-checks" style="display:none">
+    <div class="card">
+      <p class="hint" style="margin-top:0">Questions with simple tests on Echo's answer: does it recall what you saved, admit what it
+        doesn't know, stay itself, and not use pet names with you? Each is asked twice. <b>Approve</b> the checks you agree with
+        (Claude proposed these); <b>Remove</b> any you don't want. Run them after changing traits to see if anything got worse.</p>
+      <div class="row"><button id="runChecks">Run checks (about 2 minutes)</button><span class="hint" id="checkState"></span></div>
+      <div id="checkHist" class="hint" style="margin-top:8px"></div>
+    </div>
+    <div id="checkList"></div>
+  </section>
+
+  <section id="tab-versions" style="display:none">
+    <div class="card">
+      <p class="hint" style="margin-top:0">Every version of how Echo talks (approved traits, summary and base instructions). A copy is
+        kept automatically before each round of changes. <b>Restore</b> goes back to a version; it saves the current one first, so it can be undone.</p>
+      <div class="row"><input id="verNote" placeholder="What changed? (optional)" style="flex:1"><button id="verSave">Save this version</button></div>
+    </div>
+    <div id="verList"></div>
   </section>
 </main>
 <script>
@@ -162,7 +181,8 @@ async function patch(kind, id, body) {
 }
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
   document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
-  for (const t of ['traits', 'facts', 'try']) $('tab-' + t).style.display = b.dataset.tab === t ? '' : 'none';
+  for (const t of ['traits', 'facts', 'try', 'checks', 'versions']) $('tab-' + t).style.display = b.dataset.tab === t ? '' : 'none';
+  if (b.dataset.tab === 'checks') loadChecks(); if (b.dataset.tab === 'versions') loadVersions();
 });
 for (const p of PRESETS) { const b = document.createElement('button'); b.textContent = p; b.onclick = () => { $('q').value = p; ask(); }; $('presets').appendChild(b); }
 async function ask() {
@@ -185,6 +205,63 @@ async function ask() {
   $('ask').disabled = false; $('askState').textContent = '';
 }
 $('ask').onclick = ask;
+
+// ---------- checks ----------
+const mk = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+let checkTimer = null;
+async function loadChecks() {
+  const d = await (await fetch('/api/personality/evals')).json();
+  $('checkState').textContent = d.job.running ? `Running… ${d.job.done} of ${d.job.total}` : (d.job.error ? 'Last run failed: ' + d.job.error : '');
+  $('runChecks').disabled = d.job.running;
+  clearTimeout(checkTimer); if (d.job.running) checkTimer = setTimeout(loadChecks, 3000);
+  $('checkHist').textContent = d.history.slice(-5).map(h => `${h.at.replace('T', ' ')} · ${h.summary.passed}/${h.summary.total} passed${h.note ? ' · ' + h.note : ''}`).join('\n');
+  $('checkHist').style.whiteSpace = 'pre-line';
+  const last = {}; for (const r of (d.last ? d.last.results : [])) (last[r.id] = last[r.id] || []).push(r);
+  const L = $('checkList'); L.innerHTML = '';
+  for (const c of d.cases) {
+    const rs = last[c.id] || [], ok = rs.filter(r => r.passed).length;
+    const status = rs.length ? (ok === rs.length ? '✓ passed' : `✗ ${ok}/${rs.length} passed`) : 'not run yet';
+    const card = mk('div', { className: 'card' },
+      mk('div', { className: 'row', style: 'justify-content:space-between' }, mk('b', { textContent: c.question }),
+        mk('span', { className: 'hint', textContent: `${c.category}${c.speaker ? ' · said by ' + c.speaker : ''} · ${status}` })));
+    for (const r of rs) card.append(mk('p', { className: 'hint', textContent: (r.passed ? '✓ ' : '✗ ') + r.reply + (r.why.length ? '  — ' + r.why.join('; ') : '') }));
+    const btn = (t, body) => mk('button', { textContent: t, onclick: async () => {
+      await fetch('/api/personality/evals/' + c.id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); loadChecks(); } });
+    card.append(mk('div', { className: 'row' }, c.approved ? mk('span', { className: 'hint', textContent: 'Approved by you' }) : btn('Approve', { approved: true }),
+      btn('Remove', { remove: true })));
+    L.append(card);
+  }
+}
+$('runChecks').onclick = async () => { await fetch('/api/personality/evals/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); setTimeout(loadChecks, 800); };
+
+// ---------- versions ----------
+async function loadVersions() {
+  const d = await (await fetch('/api/personality/versions')).json(), L = $('verList'); L.innerHTML = '';
+  for (const v of [...d.versions].reverse()) {
+    const out = mk('div', { className: 'hint', style: 'white-space:pre-wrap' });
+    const card = mk('div', { className: 'card' },
+      mk('div', { className: 'row', style: 'justify-content:space-between' },
+        mk('b', { textContent: `Version ${parseInt(v.id)}${v.id === d.current ? ' (in use now)' : ''}` }),
+        mk('span', { className: 'hint', textContent: `${new Date(v.at * 1000).toLocaleString()} · ${v.traits} traits` })),
+      mk('p', { className: 'hint', textContent: v.note || '' }),
+      mk('div', { className: 'row' },
+        mk('button', { textContent: 'Compare with now', onclick: async () => {
+          const x = await (await fetch(`/api/personality/versions/${v.id}/diff`)).json();
+          const parts = [];
+          if (x.traits_added.length) parts.push('Traits added since: ' + x.traits_added.join('; '));
+          if (x.traits_removed.length) parts.push('Traits removed since: ' + x.traits_removed.join('; '));
+          if (x.summary_added.length || x.summary_removed.length) parts.push(`Summary: ${x.summary_added.length} lines added, ${x.summary_removed.length} removed`);
+          if (x.prompt.length) parts.push('Instructions changed:\n' + x.prompt.join('\n'));
+          out.textContent = parts.join('\n\n') || 'No differences.'; } }),
+        v.id === d.current ? '' : mk('button', { textContent: 'Restore', onclick: async () => {
+          if (!confirm('Go back to this version? The current one is saved first.')) return;
+          await fetch(`/api/personality/versions/${v.id}/restore`, { method: 'POST' }); load(); loadVersions(); } })),
+      out);
+    L.append(card);
+  }
+}
+$('verSave').onclick = async () => { await fetch('/api/personality/versions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ note: $('verNote').value.trim() || null }) }); $('verNote').value = ''; loadVersions(); };
 load();
 </script>
 </body>

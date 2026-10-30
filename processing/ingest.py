@@ -7,6 +7,8 @@ Per session, once (marker: derived/phone/ingest-v1/<id>/done.json; delete it to 
                      derived/face/phone-frames-v1/<id>/<take>/ ; audio transcribed
   answer MP4       → also an example of how the owner talks → derived/personality/examples-v1.jsonl (for review later)
   photo JPG        → copied to staging/face/photos-current/phone/ so the owner reviews it in the Face Library
+  memory WAV       → ("Tell me a memory") transcribed in ~60 s pieces → derived/memories/transcripts-v1/<id>/<take>.json,
+                     then on_memory(...) so the server can suggest memories for the owner to review (memory/candidates.py)
 """
 from __future__ import annotations
 
@@ -29,6 +31,21 @@ KEEP_FRAMES = 6
 
 def _transcribe(stt: STTBackend, data: bytes) -> str:
     return stt.transcribe_sync(decode_audio(data))
+
+
+def transcribe_long(stt: STTBackend, audio, piece_s: int = 60) -> str:
+    """Long recordings in ~60 s pieces, each cut at the quietest moment of its last 10 s (not mid-word)."""
+    import numpy as np
+    sr, out, i = 16000, [], 0
+    while i < len(audio):
+        end = min(len(audio), i + piece_s * sr)
+        if end < len(audio):
+            win = audio[end - 10 * sr:end]
+            e = np.convolve(win ** 2, np.ones(1600) / 1600, mode="valid")   # 0.1 s energy
+            end = end - 10 * sr + int(np.argmin(e)) + 800
+        out.append(stt.transcribe_sync(audio[i:end]).strip())
+        i = end
+    return " ".join(t for t in out if t)
 
 
 def _video_audio(mp4: Path) -> bytes:
@@ -67,14 +84,15 @@ def _best_frames(mp4: Path, out: Path) -> dict:
         return {"frames": len(frames), "with_face": len(scored), "kept": kept}
 
 
-def process_session(root: Path, sid: str, stt: STTBackend, progress: Callable[[str], None] = lambda m: None) -> dict:
+def process_session(root: Path, sid: str, stt: STTBackend, progress: Callable[[str], None] = lambda m: None,
+                    on_memory: Callable[[dict], None] | None = None) -> dict:
     src = root / "raw" / "phone" / sid
     marker = root / "derived" / "phone" / VERSION / sid / "done.json"
     if marker.exists():
         return json.loads(marker.read_text())
     manifest = json.loads((src / "manifest.json").read_text())
     report = {"session": sid, "version": VERSION, "voice": 0, "videos": 0, "photos": 0, "answers": 0, "frames_kept": 0,
-              "errors": []}
+              "memories": 0, "errors": []}
     qc_dir = root / "derived" / "voice" / QC_VERSION / f"phone-{sid}"
     frames_dir = root / "derived" / "face" / "phone-frames-v1" / sid
     examples = root / "derived" / "personality" / "examples-v1.jsonl"
@@ -90,10 +108,21 @@ def process_session(root: Path, sid: str, stt: STTBackend, progress: Callable[[s
                 qc = {"take": t["take"], "session": f"phone-{sid}", "prompt_id": t["task_id"], "status": t["status"],
                       "qc_version": QC_VERSION, "source": str(f.relative_to(root)), "source_sha256": t["sha256"],
                       **quality(audio, rate)}
-                heard = _transcribe(stt, f.read_bytes())
+                is_memory = t.get("task_kind") == "memory"
+                heard = transcribe_long(stt, decode_audio(f.read_bytes())) if is_memory else _transcribe(stt, f.read_bytes())
                 qc["transcript"] = heard
-                if t.get("prompt_text"):
+                if t.get("prompt_text") and not is_memory:   # a memory answers a question; nothing to read-match
                     qc["read_match"] = read_match(t["prompt_text"], heard)
+                if is_memory and heard.strip():
+                    told = {"source": str(f.relative_to(root)), "source_sha256": t["sha256"], "session": sid,
+                            "take": t["take"], "question": t.get("prompt_text"), "period": t.get("life_period"),
+                            "recorded_at": t.get("recorded_at"), "transcript": heard}
+                    tdir = root / "derived" / "memories" / "transcripts-v1" / sid
+                    tdir.mkdir(parents=True, exist_ok=True)
+                    (tdir / f"{t['take']}.json").write_text(json.dumps(told, indent=2))
+                    report["memories"] += 1
+                    if on_memory:
+                        on_memory(told)
                 qc_dir.mkdir(parents=True, exist_ok=True)
                 (qc_dir / f"{t['take']}.json").write_text(json.dumps(qc, indent=2))
                 report["voice"] += 1
@@ -134,5 +163,6 @@ def pending(root: Path) -> list[str]:
                   and not (root / "derived" / "phone" / VERSION / p.name / "done.json").exists())
 
 
-def process_all(root: Path, stt: STTBackend, progress: Callable[[str], None] = lambda m: None) -> list[dict]:
-    return [process_session(root, sid, stt, progress) for sid in pending(root)]
+def process_all(root: Path, stt: STTBackend, progress: Callable[[str], None] = lambda m: None,
+                on_memory: Callable[[dict], None] | None = None) -> list[dict]:
+    return [process_session(root, sid, stt, progress, on_memory) for sid in pending(root)]

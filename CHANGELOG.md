@@ -2,6 +2,36 @@
 
 Echo Persona is alpha software: versions may change things without a migration path. Keep backups of your data.
 
+## 0.3.0 (2026-10-30)
+
+### Memory
+- Life memories: new kind `memory` with optional `period`, `when_text`, `year`, `people`, `place`, `told_by`. Older
+  databases gain the columns on first open (a backup copy is made first).
+- Duplicate merging on save and import (word overlap ≥ 0.85); a repeat can upgrade "inferred" to "confirmed", never down.
+- Possible contradictions (`memory/conflicts.py`): related memories are judged by the local model in the background and
+  set aside for review; `/api/memory/conflicts`. Nothing is resolved automatically.
+- Search by meaning (`memory/embed.py`, nomic-embed-text via Ollama): vectors made in the background; up to 2 related
+  notes per message (cosine ≥ 0.62). Keyword search if the model is missing.
+- `scripts/offsite_backup.sh` fallback copies the memory database with `sqlite3 .backup` (WAL-safe).
+
+### Learning
+- Collector 0.3.0: "Tell me a memory" (audio-only WAV, no time limit, 3 questions from different life periods,
+  `assets/memories.json`), `life_period` in take metadata.
+- Long recordings transcribed in ~60 s pieces cut at quiet moments; transcripts in `derived/memories/transcripts-v1/`.
+- Suggested memories (`memory/candidates.py`): local model writes notes with exact quotes; notes whose quote isn't in the
+  transcript are dropped, years kept only if said. Review page `renderer/memories.html`.
+- Echo asks the owner about their life (`memory/curiosity.py`): owner's voice only, at most every 30 min, or on "ask me
+  something"; answers turned into suggestions at the next quiet moment.
+
+### Who's talking
+- `voice/speaker.py` (sherpa-onnx 2.0.1 + WeSpeaker ResNet34), `voice/enroll.py`, `renderer/voices.html` with consent and
+  "Forget this voice". `/api/stt` returns `speaker`; the model is told who is speaking with that message only.
+
+### Personality
+- `personality/versions.py`: versions of profile + review decisions + base prompt; compare and restore (undoable).
+- `personality/evals.py`: checks run through the real prompt path; Checks and Versions tabs on "How I talk".
+- Prompt template: no pet names for the owner; never put words in anyone's mouth.
+
 ## 0.2.0 (2026-10-29)
 
 ### Face and expressions

@@ -48,6 +48,8 @@
   .mi .row { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim); gap: 8px; align-items: center; }
   .mi button, .tools button { padding: 3px 10px; font-size: 12px; }
   .mi button.del { border-color: var(--err); color: var(--err); }
+  .mi.conflict { border-color: var(--err); }
+  .mi.conflict p { margin: 4px 0; font-size: 13px; }
   .tools { display: flex; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); flex-wrap: wrap; }
   .tools input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 6px 10px; font: inherit; }
   .hint { font-size: 12px; color: var(--dim); padding: 0 22px 12px; }
@@ -65,7 +67,7 @@
   <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span></div>
 </section>
 <section id="side">
-  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
+  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/memories.html" target="_blank" style="font-size:12px;color:var(--accent)">My memories</a><a href="/voices.html" target="_blank" style="font-size:12px;color:var(--accent)">Who’s talking</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
   <div id="log" aria-live="polite"></div>
   <form id="f"><input type="text" id="q" placeholder="Talk to Echo…" autocomplete="off" aria-label="Message"><button type="button" id="micBtn" title="Click, or hold Space, to talk" aria-label="Talk">🎙</button><button>Send</button></form>
 </section>
@@ -529,12 +531,26 @@ health(); setInterval(health, 10000);
 const api = (path, opts = {}) => fetch('/api/' + path, { headers: { 'Content-Type': 'application/json' }, ...opts });
 async function loadMem() {
   const items = await (await api('memory')).json(), L = $('memList'); L.innerHTML = '';
+  // possible contradictions first: nothing is changed until the owner picks
+  for (const c of await (await api('memory/conflicts')).json()) {
+    const d = document.createElement('div'); d.className = 'mi conflict';
+    const h = document.createElement('div'); h.className = 'row'; h.textContent = 'These may disagree. Which is right?';
+    const pa = document.createElement('p'), pb = document.createElement('p'), why = document.createElement('div');
+    pa.textContent = '1 · ' + c.a.content; pb.textContent = '2 · ' + c.b.content; why.className = 'row'; why.textContent = c.note;
+    const row = document.createElement('div'); row.className = 'row';
+    const pick = (label, action) => { const b = document.createElement('button'); b.textContent = label;
+      b.onclick = async () => { await api('memory/conflicts/' + c.id, { method: 'POST', body: JSON.stringify({ action }) }); loadMem(); }; return b; };
+    row.append(pick('Keep 1', 'keep_a'), pick('Keep 2', 'keep_b'), pick('Both are true', 'keep_both'));
+    d.append(h, pa, pb, why, row); L.appendChild(d);
+  }
   if (!items.length) L.innerHTML = '<div class="hint">Nothing saved yet.</div>';
   for (const it of items) {
     const d = document.createElement('div'); d.className = 'mi';
     const ta = document.createElement('textarea'); ta.value = it.content; ta.rows = 2; ta.setAttribute('aria-label', 'Memory text');
     const row = document.createElement('div'); row.className = 'row';
-    const info = document.createElement('span'); info.textContent = `${it.kind} · ${it.status} · ${new Date(it.updated*1000).toLocaleDateString()}`;
+    const info = document.createElement('span');
+    const life = [it.period && it.period.replace('_', ' '), it.when_text || it.year, it.people && 'with ' + it.people, it.place, it.told_by && it.told_by !== 'owner' && 'told by ' + it.told_by].filter(Boolean).join(' · ');
+    info.textContent = `${it.kind} · ${it.status} · ${new Date(it.updated*1000).toLocaleDateString()}` + (life ? ' · ' + life : '');
     const save = document.createElement('button'); save.textContent = 'Save';
     save.onclick = async () => { await api('memory/' + it.id, { method: 'PATCH', body: JSON.stringify({ content: ta.value }) }); loadMem(); };
     const del = document.createElement('button'); del.textContent = 'Forget'; del.className = 'del';
@@ -664,7 +680,7 @@ async function sendAudio(chunks, m) {
       if (m === 'convo' && j.end) convoEnding = true;   // let it say goodbye, then stop
     }
     if (!text) { if (m !== 'wake') setState('idle'); return; }
-    add(text, 'you', 'spoken'); setState('thinking'); ws.send(JSON.stringify({ text }));
+    add(text, 'you', 'spoken'); setState('thinking'); ws.send(JSON.stringify({ text, speaker: j.speaker }));   // who, by voice
   } catch (e) { if (m !== 'wake') { add('I couldn’t make out that recording.', 'err'); setState('idle'); } }
 }
 $('micBtn').onclick = () => recording ? stopRec() : startRec('direct');

@@ -12,13 +12,14 @@ import os
 import re
 import threading
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import httpx
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core import browser
 from core.config import ROOT, PersonaConfig, load_config, load_personality
@@ -30,10 +31,18 @@ from face.library import FaceError, FaceLibrary
 from transfer import phone_sync
 from processing import ingest
 from personality import build as persona
+from personality import evals as pevals
+from personality.versions import Versions
 from voice.studio import CONSENT_TEXT, MAX_TAKE_BYTES, Studio, StudioError
 from voice.wake import detect_end, detect_wake, is_noise_transcript
-from memory.store import Kind, Memory, MemoryStore, Status, format_for_prompt, format_summaries, parse_remember
+from voice.speaker import NAME_RE as SPEAKER_NAME_RE, SpeakerID
+from memory.store import LIFE_FIELDS, Kind, Memory, MemoryStore, Period, Status, format_for_prompt, format_summaries, parse_remember
 from memory import summarize as summarizer
+from memory import conflicts as conflict_check
+from memory.embed import Embedder
+from memory import candidates as mem_candidates
+from memory.curiosity import Curiosity, asked_in, hint as curiosity_hint
+from core.llm import OllamaBackend
 
 log = logging.getLogger("echo")
 MAX_TURNS = 20  # short-term context sent to the LLM
@@ -82,6 +91,15 @@ class FactIn(BaseModel):
     status: str                 # saved | rejected
 
 
+class VersionIn(BaseModel):
+    note: str | None = Field(None, max_length=200)
+
+
+class EvalCaseIn(BaseModel):
+    approved: bool | None = None
+    remove: bool = False
+
+
 class TryIn(BaseModel):
     question: str
 
@@ -107,6 +125,26 @@ class MemoryPatch(BaseModel):
     content: str | None = None
     kind: Kind | None = None
     status: Status | None = None
+    period: Period | None = None
+    when_text: str | None = None
+    year: int | None = None
+    people: str | None = None
+    place: str | None = None
+    told_by: str | None = None
+
+
+class CandidateIn(BaseModel):
+    action: Literal["approve", "reject"]
+    content: str | None = Field(None, min_length=1, max_length=2000)
+    period: Period | None = None
+    when_text: str | None = Field(None, max_length=60)
+    year: int | None = Field(None, ge=1900, le=2200)
+    people: str | None = Field(None, max_length=300)
+    place: str | None = Field(None, max_length=200)
+
+
+class ConflictIn(BaseModel):
+    action: Literal["keep_both", "keep_a", "keep_b"]
 
 
 class ClaudeIn(BaseModel):
@@ -114,17 +152,52 @@ class ClaudeIn(BaseModel):
     jobs: dict[str, bool] | None = None
 
 
+MEANING_MIN = 0.62   # nomic-embed-text cosine; below this, matches were mostly unrelated (measured 2026-10-30)
+
+
 def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = None,
                store: MemoryStore | None = None, stt: STTBackend | None = None,
-               studio: Studio | None = None, faces: FaceLibrary | None = None) -> FastAPI:
+               studio: Studio | None = None, faces: FaceLibrary | None = None,
+               conflict_judge: conflict_check.Judge | None = None, speakers: SpeakerID | None = None,
+               embedder: Embedder | None = None) -> FastAPI:
     cfg = cfg or load_config()
+    speakers = speakers or SpeakerID(cfg.resolve(cfg.speaker_model), cfg.resolve(cfg.speakers_dir),
+                                     cfg.speaker_threshold, cfg.speaker_margin)
     backend = backend or make_backend(cfg.llm)
     store = store or MemoryStore(cfg.resolve(cfg.memory_db))
-    system_prompt = load_personality(cfg) + (
+    if conflict_judge is None and isinstance(backend, OllamaBackend):
+        conflict_judge = conflict_check.ollama_judge(cfg.llm.host, cfg.llm.model)
+    if embedder is None and isinstance(backend, OllamaBackend):
+        embedder = Embedder(cfg.llm.host)   # search by meaning; without it, keyword search only
+    answered_on_phone = set()
+    try:   # questions already answered with "Tell me a memory" aren't asked again in conversation
+        for f in (cfg.resolve(cfg.dataset_root) / "raw" / "phone").glob("*/*.json"):
+            if f.name != "manifest.json" and '"memory"' in (t := f.read_text()):
+                answered_on_phone.add(json.loads(t).get("task_id"))
+    except Exception:
+        pass
+    curiosity = Curiosity(store, cfg.ask_enabled, cfg.ask_every_minutes, cfg.ask_min_turns, answered=answered_on_phone)
+
+    def check_conflicts_later(m: Memory, dup: bool) -> None:
+        """New memory → look for contradictions in the background (the language model may be busy replying)."""
+        if dup or m.kind == "summary":
+            return
+        def run():
+            try:
+                if (n := conflict_check.check(store, m, conflict_judge)):
+                    log.info("memory %s: %d possible conflict(s) flagged for review", m.id, n)
+            except Exception as e:
+                log.warning("conflict check failed: %s", type(e).__name__)
+        threading.Thread(target=run, daemon=True, name="memory-conflicts").start()
+    SYSTEM_EXTRA = (
         "\n\nI can open web pages in Chrome on this Mac when asked with \"open\" or \"go to\" plus a saved place (shortcuts "
         "in config/browser.json, such as the Voice Studio or the Weather Channel) or an address said out "
         "loud (\"go to apple dot com\"). That happens before I answer. If a request to open something reaches me anyway, "
-        "I never say I can't open websites; I ask them to say it again with the address, like \"go to apple dot com\".")
+        "I never say I can't open websites; I ask them to say it again with the address, like \"go to apple dot com\"."
+        "\n\nWhen someone talks to me out loud, their message may start with a note like [Recognised by voice: the owner "
+        "is speaking]. I trust it, so I know who I'm talking with, but voice recognition can be wrong: if something "
+        "important depends on who it is, I ask kindly. I never read these notes aloud.")
+    prompt = {"text": load_personality(cfg) + SYSTEM_EXTRA}   # reloaded when a personality version is restored
     voice_cfg = ROOT / "config" / "voice.json"   # {"stt": "parakeet" | "whisper", "reference": ...}
     stt_choice = (json.loads(voice_cfg.read_text()).get("stt") if voice_cfg.exists() else None) or "whisper"
     stt = stt or make_stt(stt_choice, cfg.voice.stt_model, cfg.voice.language)
@@ -161,8 +234,17 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         the (changed) instructions so the next reply is still quick."""
         while True:
             await asyncio.sleep(15)
+            if embedder:   # vectors for new/edited memories (one quick query when there's nothing to do)
+                try:
+                    if (n := await asyncio.to_thread(embedder.index, store)):
+                        log.info("memory vectors made: %d", n)
+                except Exception as e:
+                    log.warning("memory vectors failed: %s", type(e).__name__)
             if time.time() - last_turn["at"] < 20 or not hasattr(backend, "warm"):
                 continue
+            for a in curiosity.pop_answers():   # the owner's answers to my questions → suggestions on My memories
+                await asyncio.to_thread(suggest_memories, {"transcript": a["text"], "question": a["question"],
+                                                           "source": a["source"], "period": a["period"]})
             try:
                 n = await asyncio.to_thread(summarizer.summarize_pending, store, len(store.turns_window()),
                                             cfg.llm.host, cfg.llm.model, 4, helper)
@@ -185,6 +267,16 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     app.state.store = store
 
 
+    async def identify_speaker(audio) -> dict:
+        if not speakers.profiles or not speakers.available:
+            return {}
+        try:
+            r = await asyncio.to_thread(speakers.identify, audio)
+            return {"speaker": r["speaker"], "speaker_score": r["score"]}
+        except Exception as e:   # never let this break listening
+            log.warning("speaker check failed: %s", type(e).__name__)
+            return {}
+
     @app.post("/api/stt")
     async def speech_to_text(request: Request, mode: str = "direct", debug: bool = False):
         body = await request.body()
@@ -192,7 +284,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             raise HTTPException(413, "audio too large")
         try:
             audio = await asyncio.to_thread(decode_audio, body)
-            text = await stt.transcribe(audio)
+            # who's talking, worked out alongside the transcript (CPU vs GPU); only returned with text that's kept
+            text, who = await asyncio.gather(stt.transcribe(audio), identify_speaker(audio))
         except STTError as e:
             raise HTTPException(400, str(e))
         log.info("stt ok mode=%s seconds=%.1f", mode, len(audio) / 16000)  # transcript deliberately not logged
@@ -201,15 +294,15 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         if mode == "wake":
             woke, command = detect_wake(text)
             # Without the wake phrase the transcript is discarded and never returned.
-            out = {"wake": woke, "command": command} if woke else {"wake": False}
+            out = {"wake": woke, "command": command, **who} if woke else {"wake": False}
             if debug:  # the owner explicitly turned on "Show what I hear" in the window
                 out["heard"] = text
             return out
         if mode == "conversation":  # follow-up turn after "Hey Echo": no wake word needed
             if is_noise_transcript(text):
                 return {"text": ""}
-            return {"text": text, "end": detect_end(text)}
-        return {"text": text}
+            return {"text": text, "end": detect_end(text), **who}
+        return {"text": text, **who}
 
     @app.get("/health")
     async def health():
@@ -224,13 +317,16 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     @app.post("/api/memory")
     def add_memory(m: Memory):
-        return store.save(m.model_copy(update={"source": "owner:panel"})).model_dump()
+        saved, dup = store.add(m.model_copy(update={"source": "owner:panel"}))
+        check_conflicts_later(saved, dup)
+        return saved.model_dump() | {"duplicate": dup}
 
     @app.patch("/api/memory/{mid}")
     def patch_memory(mid: int, p: MemoryPatch):
         m = store.correct(mid, p.content) if p.content else store.get(mid)
-        if m and (p.kind or p.status):
-            m = store.update(mid, kind=p.kind, status=p.status)
+        extra = {f: getattr(p, f) for f in LIFE_FIELDS if getattr(p, f) is not None}
+        if m and (p.kind or p.status or extra):
+            m = store.update(mid, kind=p.kind, status=p.status, **extra)
         if not m:
             raise HTTPException(404)
         return m.model_dump()
@@ -240,6 +336,127 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         if not store.forget(mid):
             raise HTTPException(404)
         return {"forgotten": mid}
+
+    @app.get("/api/memory/conflicts")
+    def list_conflicts():
+        return store.open_conflicts()
+
+    @app.post("/api/memory/conflicts/{cid}")
+    def resolve_conflict(cid: int, body: ConflictIn):
+        if not store.resolve_conflict(cid, body.action):
+            raise HTTPException(404)
+        return {"resolved": cid, "action": body.action}
+
+    # ---- suggested life memories (renderer/memories.html) ----
+    @app.get("/api/memories/candidates")
+    def list_candidates():
+        out = []
+        for c in store.candidates("pending"):
+            similar = None
+            if embedder and (v := embedder.query(c["content"])):   # "I may already know this"
+                near = store.by_meaning(v, embedder.model, 1, min_sim=0.8)
+                similar = near[0][0].content if near else None
+            out.append(c | {"similar": similar})
+        return out
+
+    @app.post("/api/memories/candidates/{cid}")
+    def decide_candidate(cid: int, body: CandidateIn):
+        if body.action == "reject":
+            if not store.reject_candidate(cid):
+                raise HTTPException(404)
+            return {"rejected": cid}
+        got = store.approve_candidate(cid, body.model_dump(exclude={"action"}, exclude_none=True))
+        if not got:
+            raise HTTPException(404)
+        m, dup = got
+        check_conflicts_later(m, dup)
+        return m.model_dump() | {"duplicate": dup}
+
+    @app.get("/api/memories/candidates/{cid}/audio")
+    def candidate_audio(cid: int):
+        """Play the recording a suggestion came from (only files inside the dataset's raw folder)."""
+        c = store.candidate(cid)
+        root = cfg.resolve(cfg.dataset_root).resolve()
+        f = (root / c["source"]).resolve() if c else None
+        if not f or not f.is_relative_to(root / "raw") or not f.is_file():
+            raise HTTPException(404)
+        return FileResponse(f)
+
+    @app.get("/api/memories/life")
+    def life_story():
+        """Approved life memories, roughly in order: by period, then year."""
+        order = {p: i for i, p in enumerate(mem_candidates.PERIODS)}
+        mems = [m for m in store.all() if m.kind == "memory"]
+        return [m.model_dump() for m in sorted(mems, key=lambda m: (order.get(m.period or "unknown", 9), m.year or 9999, m.id))]
+
+    # ---- who's talking: voice profiles (renderer/voices.html) ----
+    @app.get("/api/speakers")
+    def list_speakers():
+        return {"available": speakers.available, "threshold": speakers.threshold,
+                "people": [speakers.info(n) for n in speakers.profiles]}
+
+    @app.post("/api/speakers/{name}/sample")
+    async def add_speaker_sample(name: str, request: Request, consent: bool = False):
+        """One spoken sample for `name`'s voice profile. The person must have agreed (consent=true from the page).
+        The original is kept read-only on the dataset drive (raw/speakers/<name>/) so a better model can re-learn later."""
+        if not SPEAKER_NAME_RE.match(name):
+            raise HTTPException(400, "bad name")
+        if not consent:
+            raise HTTPException(403, "the person must agree first")
+        if not speakers.available:
+            raise HTTPException(503, "speaker model missing")
+        body = await request.body()
+        if len(body) > MAX_AUDIO_BYTES:
+            raise HTTPException(413, "audio too large")
+        try:
+            audio = await asyncio.to_thread(decode_audio, body)
+        except STTError as e:
+            raise HTTPException(400, str(e))
+        if len(audio) < 3 * 16000:
+            raise HTTPException(400, "too short: please read the whole sentence (at least 3 seconds)")
+        src = "not kept (dataset drive not connected)"
+        root = cfg.resolve(cfg.dataset_root)
+        if root.exists():
+            import hashlib
+            d = root / "raw" / "speakers" / name
+            d.mkdir(parents=True, exist_ok=True)
+            f = d / time.strftime("%Y%m%d-%H%M%S.wav")
+            with open(f, "xb") as fh:   # never overwrite an original
+                fh.write(body)
+            (d / (f.stem + ".meta.json")).write_text(json.dumps(
+                {"file": f.name, "sha256": hashlib.sha256(body).hexdigest(), "seconds": round(len(audio) / 16000, 1),
+                 "consent": True, "at": time.time()}))
+            f.chmod(0o444)
+            src = f"raw/speakers/{name}/{f.name}"
+        info = await asyncio.to_thread(speakers.enroll, name, [audio], [src])
+        log.info("voice profile %s: %d samples", name, info["samples"])
+        return info
+
+    @app.post("/api/speakers/test")
+    async def test_speaker(request: Request):
+        """Say something → who does it sound like? Nothing is kept."""
+        try:
+            audio = await asyncio.to_thread(decode_audio, await request.body())
+        except STTError as e:
+            raise HTTPException(400, str(e))
+        return await asyncio.to_thread(speakers.identify, audio)
+
+    @app.delete("/api/speakers/{name}")
+    def forget_speaker(name: str):
+        """Forget a voice: the profile and the kept samples are deleted."""
+        if not SPEAKER_NAME_RE.match(name):
+            raise HTTPException(400, "bad name")
+        found = speakers.forget(name)
+        d = cfg.resolve(cfg.dataset_root) / "raw" / "speakers" / name
+        if d.is_dir():
+            import shutil
+            for f in d.iterdir():
+                f.chmod(0o644)
+            shutil.rmtree(d)
+            found = True
+        if not found:
+            raise HTTPException(404)
+        return {"forgotten": name}
 
     @app.get("/api/memory/export", response_class=PlainTextResponse)
     def export_memory():
@@ -439,6 +656,15 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     job = {"running": False, "current": None, "done": [], "error": None}
 
+    def suggest_memories(told: dict) -> None:
+        """A "Tell me a memory" recording was transcribed → suggestions for the My memories page (local model only)."""
+        try:
+            n = mem_candidates.suggest(store, told["transcript"], told.get("question") or "", told["source"],
+                                       cfg.llm.host, cfg.llm.model, told.get("period"))
+            log.info("memory suggestions from a recording: %d", n)   # the memories themselves are not logged
+        except Exception as e:
+            log.warning("memory suggestions failed: %s", type(e).__name__)
+
     def start_processing():
         if job["running"]:
             return
@@ -447,7 +673,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         def run():
             job.update(running=True, error=None, done=[])
             try:
-                for rep in ingest.process_all(root, stt, lambda m: job.update(current=m)):
+                for rep in ingest.process_all(root, stt, lambda m: job.update(current=m), on_memory=suggest_memories):
                     job["done"].append(rep)
                 if job["done"]:
                     update_personality()   # new own-words answers → new traits to review (decisions are kept)
@@ -478,7 +704,11 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             raise HTTPException(404, "No personality draft yet.")
         return json.loads(p.read_text())
 
+    prompt_file = cfg.resolve(cfg.personality_file)
+    versions = Versions(pdir, prompt_file if prompt_file.exists() else ROOT / "config" / "personality.example.yaml")
+
     def save_draft(d: dict) -> None:
+        versions.snapshot_if_stale()   # a copy of how it was before this editing session (undo)
         (pdir / "draft.json").write_text(json.dumps(d, indent=2))
         # what Echo uses: only approved traits, plus style numbers and The owner's own sentences as examples
         approved = [{"category": t["category"], "trait": t["trait"]} for t in d["traits"] if t["status"] == "approved"]
@@ -564,7 +794,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         if not f or body.status not in ("saved", "rejected"):
             raise HTTPException(400, "bad fact or status")
         if body.status == "saved" and f["status"] != "saved":   # the owner confirmed it: a real memory now
-            m = store.save(Memory(content=f["fact"], kind="fact", status="confirmed", source="owner:personality-review"))
+            m, dup = store.add(Memory(content=f["fact"], kind="fact", status="confirmed", source="owner:personality-review"))
+            check_conflicts_later(m, dup)
             f["memory_id"] = m.id
         f["status"] = body.status
         save_draft(d)
@@ -586,6 +817,87 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         with open(pdir / "evals.jsonl", "a") as f:
             f.write(json.dumps(body.model_dump() | {"at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                                                      "traits_approved": len((persona.load_profile(pdir) or {}).get("traits", []))}) + "\n")
+        return {"ok": True}
+
+    # ---- personality versions (compare / undo) ----
+    @app.get("/api/personality/versions")
+    def list_versions():
+        return {"versions": versions.list(), "current": versions.current_id()}
+
+    @app.post("/api/personality/versions")
+    def save_version(body: VersionIn):
+        return versions.snapshot(body.note or "saved by the owner")
+
+    @app.get("/api/personality/versions/{vid}/diff")
+    def diff_version(vid: str, against: str = "current"):
+        try:
+            return versions.diff(vid, against)
+        except KeyError:
+            raise HTTPException(404)
+
+    @app.post("/api/personality/versions/{vid}/restore")
+    def restore_version(vid: str):
+        try:
+            r = versions.restore(vid)
+        except KeyError:
+            raise HTTPException(404)
+        prompt["text"] = load_personality(cfg) + SYSTEM_EXTRA
+        log.info("personality version restored: %s", vid)
+        return r
+
+    # ---- personality checks ----
+    edir = pdir / "evals"
+    eval_job = {"running": False, "done": 0, "total": 0, "error": None}
+
+    async def run_evals(note: str = "", repeat: int = 2):
+        cases = pevals.load_cases(edir / "cases.json")
+        eval_job.update(running=True, done=0, total=len(cases) * repeat, error=None)
+        results = []
+        try:
+            for c in cases:
+                for _ in range(repeat):
+                    qvec = await asyncio.to_thread(embedder.query, c["question"]) if embedder else None
+                    msgs = build_messages(c["question"], c.get("speaker"), qvec)
+                    msgs = [msgs[0], msgs[-1]]   # no conversation history: each check starts fresh
+                    parser = StreamParser(allow_name=True)
+                    parser.ask(c["question"])
+                    async for piece in backend.chat_stream(msgs):
+                        parser.feed(piece)
+                    text = parser.finish().text
+                    why = pevals.check(text, c.get("checks", {}))
+                    results.append({"id": c["id"], "category": c["category"], "approved": c.get("approved", False),
+                                    "reply": text, "passed": not why, "why": why})
+                    eval_job["done"] += 1
+            pevals.save_run(edir / "runs", results, versions.current_id() or versions.snapshot("automatic, checks run")["id"], note)
+        except Exception as e:
+            eval_job["error"] = type(e).__name__
+            log.warning("personality checks failed: %s", type(e).__name__)
+        eval_job["running"] = False
+
+    @app.get("/api/personality/evals")
+    def get_evals():
+        rs = pevals.runs(edir / "runs")
+        return {"cases": pevals.load_cases(edir / "cases.json"), "job": eval_job,
+                "last": rs[-1] if rs else None, "history": [{"at": r["at"], "version": r["version"], "note": r["note"],
+                                                            "summary": r["summary"]} for r in rs]}
+
+    @app.post("/api/personality/evals/run")
+    async def start_evals(body: VersionIn):
+        if not eval_job["running"]:
+            asyncio.create_task(run_evals(body.note or ""))
+        return eval_job
+
+    @app.patch("/api/personality/evals/{cid}")
+    def patch_eval(cid: str, body: EvalCaseIn):
+        cases = pevals.load_cases(edir / "cases.json")
+        c = next((c for c in cases if c["id"] == cid), None)
+        if not c:
+            raise HTTPException(404)
+        if body.remove:
+            cases.remove(c)
+        if body.approved is not None:
+            c["approved"] = body.approved
+        (edir / "cases.json").write_text(json.dumps(cases, indent=2))
         return {"ok": True}
 
     # ---- status page for whoever looks after Echo ----
@@ -626,14 +938,15 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         return {"cleared": True}
 
     # ---- conversation ----
-    def build_messages(text: str) -> list[dict]:
+    def build_messages(text: str, speaker: str | None = None, qvec: list[float] | None = None,
+                       extra_hint: str = "") -> list[dict]:
         """Stable part first (base personality, approved traits, memories while few), then the conversation, then the
         parts that change every message (The owner's example sentences, memory search). Ollama reuses its work on an
         unchanged beginning, which cuts the wait for the first word."""
         profile = persona.load_profile(pdir)
         facts, notes = store.facts(), store.summaries()
-        stable = [system_prompt, persona.traits_block(profile),
-                  format_for_prompt(facts if len(facts) <= 40 else facts[-40:]),   # facts rarely change
+        stable = [prompt["text"], persona.traits_block(profile),
+                  format_for_prompt(facts if len(facts) <= 40 else facts[-40:], store.conflicted_ids()),   # rarely change
                   format_summaries(notes[-3:])]                                     # the latest conversation notes
         system = "\n\n".join(x for x in stable if x)
         # Older notes or facts that match this message go with the message itself, not the system block: Ollama merges
@@ -644,9 +957,19 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         said = content_words(text)
         extra = [m for m in store.search(text, limit=8)
                  if m.id not in recent_ids and len(said & content_words(m.content)) >= 2][:2]
+        if qvec is not None and embedder:   # by meaning first ("dinner" finds a talk about a favourite recipe), then keywords
+            near = [m for m, _ in store.by_meaning(qvec, embedder.model, limit=6, min_sim=MEANING_MIN)
+                    if m.id not in recent_ids]
+            extra = list({m.id: m for m in near[:2] + extra}.values())[:2]
         user = text
         if extra:
             user = "[From my notes, in case it helps: " + " | ".join(m.content for m in extra) + "]\n\n" + text
+        if extra_hint:
+            user = user + "\n\n" + extra_hint
+        if speaker:   # like the notes, this goes with the message only; the stored conversation keeps what was said
+            who = {"owner": "the owner", "loved_one": cfg.loved_one_name or "my loved one"}.get(speaker, speaker.replace("_", " "))
+            user = (f"[Recognised by voice: {who} is speaking]" if speaker != "unknown"
+                    else "[Voice not recognised for sure]") + "\n" + user
         return [{"role": "system", "content": system}] + store.turns_window() + [{"role": "user", "content": user}]
 
     windows: list[WebSocket] = []  # open Echo windows; only the newest one may use the microphone
@@ -691,6 +1014,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             while True:
                 msg = await sock.receive_json()
                 text = str(msg.get("text", "")).strip()[:4000]
+                # who said it, from the voice (spoken messages only); anything that isn't a known profile is ignored
+                speaker = msg.get("speaker") if msg.get("speaker") in (*speakers.profiles, "unknown") else None
                 if not text:
                     continue
                 last_turn["at"] = time.time()   # someone is talking: no note-writing now
@@ -710,10 +1035,16 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     continue
                 fact = parse_remember(text)
                 if fact:
-                    m = store.save(Memory(content=fact, source="owner:chat"))
-                    await sock.send_json({"type": "memory_saved", "memory": m.model_dump()})
+                    teller = speaker if speaker and speaker != "unknown" else None
+                    m, dup = store.add(Memory(content=fact, source=f"{teller or 'owner'}:chat", told_by=teller))
+                    check_conflicts_later(m, dup)
+                    await sock.send_json({"type": "memory_saved", "memory": m.model_dump(), "duplicate": dup})
                 await sock.send_json({"type": "state", "state": "thinking"})
-                messages = build_messages(text)
+                if (q := curiosity.take_answer(speaker, text)):   # the owner answered my question → reviewed later
+                    curiosity.queue_answer(q, text)
+                ask = curiosity.maybe_ask(speaker, text)
+                qvec = await asyncio.to_thread(embedder.query, text) if embedder else None   # ~15 ms
+                messages = build_messages(text, speaker, qvec, curiosity_hint(ask) if ask else "")
                 try:
                     # their name only now and then: allowed if none of the last 5 replies used it
                     recent = [t["content"] for t in store.recent_turns(10) if t["role"] == "assistant"][-5:]
@@ -740,6 +1071,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 store.add_turn("user", text)
                 store.add_turn("assistant", reply.text)
                 last_turn["at"] = time.time()
+                if ask and asked_in(reply.text, ask):   # he really asked it: wait for the owner's answer
+                    curiosity.asked(ask)
                 st = getattr(backend, "last_stats", {})
                 log.info("turn ok expression=%s first_token_ms=%d prompt_tokens=%s prompt_ms=%s reply_tokens=%s",
                          reply.expression, round(((t_first or time.perf_counter()) - t_start) * 1000),

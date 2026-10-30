@@ -70,6 +70,7 @@ class Store(context: Context) {
             put("category", task.category)
             put("prompt_text", task.text)
             put("expression_label", task.expressionLabel ?: JSONObject.NULL)  // the instructed task, not a diagnosis
+            put("life_period", task.lifePeriod ?: JSONObject.NULL)            // memories: childhood, teen, …
             put("recorded_at", now())
             put("duration_ms", durationMs)
             put("bytes", media.length())

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My memories — Echo</title>
+<style>
+  :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+          --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  main { max-width: 860px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  h2 { font-weight: 400; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 8px 0 0; }
+  .hint { color: var(--dim); font-size: 13px; }
+  .quote { color: var(--dim); font-size: 13px; font-style: italic; margin: 6px 0; }
+  .similar { color: var(--warn); font-size: 13px; }
+  textarea, input, select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; font: inherit; padding: 6px 8px; }
+  textarea { width: 100%; resize: vertical; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
+  .fields label { font-size: 12px; color: var(--dim); display: grid; gap: 2px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 16px; font: inherit; cursor: pointer; }
+  button.ok { border-color: var(--good); color: var(--good); }
+  button.no { border-color: var(--err); color: var(--err); }
+  audio { height: 32px; }
+  .life { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .life:last-child { border-bottom: 0; }
+  .tab { color: var(--accent); cursor: pointer; font-size: 14px; }
+  .tab.on { text-decoration: underline; }
+</style>
+</head>
+<body>
+<header><h1>MY MEMORIES</h1>
+  <span class="tab on" id="tabReview">To review</span><span class="tab" id="tabLife">My life story</span></header>
+<main id="main"></main>
+<script>
+const $ = id => document.getElementById(id);
+const PERIODS = [['childhood', 'Childhood'], ['teen', 'Teenage years'], ['young_adult', 'Young adult'], ['adult', 'Grown-up life'],
+                 ['recent', 'These days'], ['unknown', 'Not sure when']];
+const label = p => (PERIODS.find(x => x[0] === p) || [, 'Not sure when'])[1];
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+
+async function review() {
+  const M = $('main'); M.innerHTML = '<div class="hint">Loading…</div>';
+  const items = await (await fetch('/api/memories/candidates')).json();
+  M.innerHTML = '';
+  M.append(el('div', { className: 'hint', textContent: items.length
+    ? `${items.length} suggested memories from your recordings. Fix anything the computer misheard (names especially), then Keep or Not right. Nothing becomes a memory until you keep it.`
+    : 'Nothing to review. Record "Tell me a memory" on the phone, then "Copy from phone" in the Avatar Collector.' }));
+  let lastSource = null;
+  for (const c of items) {
+    if (c.source !== lastSource) { M.append(el('h2', { textContent: c.question || c.source })); lastSource = c.source; }
+    const ta = el('textarea', { value: c.content, rows: 2 });
+    const f = {};
+    const field = (k, name, input) => { f[k] = input; return el('label', {}, name, input); };
+    const sel = el('select'); PERIODS.forEach(([v, n]) => sel.append(el('option', { value: v, textContent: n }))); sel.value = c.period || 'unknown';
+    const fields = el('div', { className: 'fields' },
+      field('period', 'When in life', sel),
+      field('when_text', 'When (your words)', el('input', { value: c.when_text || '', placeholder: 'summer 1974' })),
+      field('year', 'Year', el('input', { value: c.year || '', placeholder: '1974', inputMode: 'numeric' })),
+      field('people', 'Who was there', el('input', { value: c.people || '' })),
+      field('place', 'Where', el('input', { value: c.place || '' })));
+    const card = el('div', { className: 'card' }, ta, fields,
+      el('div', { className: 'quote', textContent: `You said: “${c.quote}”` }));
+    if (c.similar) card.append(el('div', { className: 'similar', textContent: `I may already remember this: “${c.similar}”` }));
+    const msg = el('span', { className: 'hint' });
+    const decide = async action => {
+      const body = { action };
+      if (action === 'approve') {
+        body.content = ta.value.trim(); body.period = f.period.value;
+        for (const k of ['when_text', 'people', 'place']) body[k] = f[k].value.trim() || null;
+        const y = parseInt(f.year.value, 10); body.year = y >= 1900 && y <= 2200 ? y : null;
+      }
+      const r = await fetch('/api/memories/candidates/' + c.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) { msg.textContent = 'That didn’t work.'; return; }
+      const j = await r.json();
+      card.replaceChildren(el('div', { className: 'hint', textContent: action === 'reject' ? 'Left out.' : (j.duplicate ? 'Already remembered (merged).' : 'Kept as a memory.') }));
+    };
+    const audio = el('audio', { controls: true, preload: 'none', src: `/api/memories/candidates/${c.id}/audio` });
+    card.append(el('div', { className: 'row' },
+      el('button', { className: 'ok', textContent: 'Keep', onclick: () => decide('approve') }),
+      el('button', { className: 'no', textContent: 'Not right', onclick: () => decide('reject') }), audio, msg));
+    M.append(card);
+  }
+}
+
+async function life() {
+  const M = $('main'); M.innerHTML = '';
+  const mems = await (await fetch('/api/memories/life')).json();
+  if (!mems.length) { M.append(el('div', { className: 'hint', textContent: 'No life memories kept yet.' })); return; }
+  let cur = null, box = null;
+  for (const m of mems) {
+    if (m.period !== cur) { cur = m.period; M.append(el('h2', { textContent: label(m.period) })); box = el('div', { className: 'card' }); M.append(box); }
+    const meta = [m.when_text || m.year, m.people && 'with ' + m.people, m.place].filter(Boolean).join(' · ');
+    box.append(el('div', { className: 'life' }, m.content, meta ? el('div', { className: 'hint', textContent: meta }) : ''));
+  }
+}
+const tabs = { tabReview: review, tabLife: life };
+for (const id in tabs) $(id).onclick = () => { for (const t in tabs) $(t).classList.toggle('on', t === id); tabs[id](); };
+review();
+</script>
+</body>
+</html>

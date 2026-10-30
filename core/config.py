@@ -40,6 +40,15 @@ class PersonaConfig(BaseModel):
     backup_dir: str = "data/backups"
     dataset_root: str = "/Volumes/External storage/EchoPersona-Data"  # external SSD
     personality_dir: str = "data/personality"   # draft + the owner-approved profile
+    # who's talking (voice/speaker.py): voice profiles + model; threshold/margin from scripts/bench_speaker.py
+    speakers_dir: str = "data/speakers"
+    speaker_model: str = "models/speaker/wespeaker_en_voxceleb_resnet34.onnx"
+    speaker_threshold: float = 0.72
+    speaker_margin: float = 0.1
+    # Echo asks the owner about their life (memory/curiosity.py): only when the voice is the owner's
+    ask_enabled: bool = True
+    ask_every_minutes: float = 30
+    ask_min_turns: int = 4
 
     def resolve(self, p: str) -> Path:
         path = Path(p).expanduser()

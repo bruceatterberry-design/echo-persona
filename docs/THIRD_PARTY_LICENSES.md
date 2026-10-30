@@ -13,3 +13,7 @@
 | PyTorch | 2.3.0 (animate env) | LivePortrait runtime | BSD-3 | |
 | Apple Vision framework | macOS 27 | face finding in the face library | Apple SDK | on-device |
 | FastAPI, Uvicorn, Pydantic, httpx, PyYAML, NumPy, Pillow | see uv.lock | core service | MIT / BSD / HPND | |
+
+## sherpa-onnx 2.0.1 (speaker recognition, 2026-10-30)
+Apache-2.0, https://github.com/k2-fsa/sherpa-onnx. Model: WeSpeaker ResNet34 (VoxCeleb), downloaded from the sherpa-onnx
+releases; check the WeSpeaker project's model licence before redistributing it.

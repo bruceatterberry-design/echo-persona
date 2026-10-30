@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Who's talking — Echo</title>
+<style>
+  :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+          --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  main { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; display: grid; gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+  h2 { font-weight: 400; font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
+  .row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  .row:last-child { border-bottom: 0; }
+  .hint { color: var(--dim); font-size: 13px; }
+  .ok { color: var(--good); } .warn { color: var(--warn); } .bad { color: var(--err); }
+  button { background: transparent; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 16px; font: inherit; cursor: pointer; }
+  button.big { font-size: 17px; padding: 12px 26px; border-color: var(--accent); }
+  button.rec { border-color: var(--err); color: var(--err); }
+  button:disabled { opacity: .4; cursor: default; }
+  .say { font-size: 22px; line-height: 1.4; margin: 14px 0; }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px; font: inherit; }
+</style>
+</head>
+<body>
+<header><h1>WHO'S TALKING</h1></header>
+<main>
+  <div class="card">
+    <h2>Voices Echo knows</h2>
+    <div id="people" class="hint">Loading…</div>
+    <p class="hint">Echo compares each spoken sentence with these voices, on this Mac only. If no voice matches clearly,
+      it treats the speaker as unknown and asks when it matters. The owner's voice is learned from their own recordings.</p>
+  </div>
+
+  <div class="card">
+    <h2>Teach Echo a voice</h2>
+    <div class="row"><span>Whose voice?</span>
+      <select id="who"><option value="loved_one">My loved one</option></select></div>
+    <p><label><input type="checkbox" id="consent"> <span id="consentText">I'm the person reading below, and I agree that Echo keeps short recordings of my
+      voice and a voice print on this Mac so it can recognise me. I can ask for them to be deleted at any time.</span></label></p>
+    <p class="hint">Read each sentence in your normal voice, about an arm's length from the microphone. 6 sentences, about a minute in all.</p>
+    <div class="say" id="say"></div>
+    <button class="big" id="recBtn" disabled>● Start reading</button>
+    <span id="msg" class="hint"></span>
+  </div>
+
+  <div class="card">
+    <h2>Try it</h2>
+    <p class="hint">Say a sentence of your own; Echo tells you whose voice it sounds like. Nothing is kept.</p>
+    <button id="testBtn">● Try my voice</button> <span id="testMsg"></span>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const LINES = [
+  "Good morning! I was thinking we could have coffee out on the porch today.",
+  "Did you remember to call your sister back about the weekend?",
+  "The kids at school did a wonderful job on their project this week.",
+  "I'd like to go for a walk later, if the weather stays nice.",
+  "Can you tell me a story about when you were young?",
+  "Let's put on some music and make dinner together tonight.",
+];
+let step = 0, rec = null, chunks = [], stream = null;
+// Echo's own listening pauses while this page records (same signal as the Avatar Collector)
+let bc; try { bc = new BroadcastChannel('echo'); bc.postMessage('studio-open'); addEventListener('pagehide', () => bc.postMessage('studio-closed')); } catch {}
+
+async function load() {
+  const r = await (await fetch('/api/speakers')).json(), P = $('people');
+  if (!r.available) { P.innerHTML = '<span class="bad">The voice-recognition model is missing (see docs/SPEAKERS.md).</span>'; return; }
+  P.innerHTML = r.people.length ? '' : 'None yet.';
+  for (const p of r.people) {
+    const d = document.createElement('div'); d.className = 'row';
+    const n = document.createElement('span'); n.textContent = `${p.name[0].toUpperCase() + p.name.slice(1)} · ${p.samples} samples`;
+    const b = document.createElement('button'); b.textContent = 'Forget this voice';
+    b.onclick = async () => { if (confirm(`Forget ${p.name}'s voice? The voice print and kept samples are deleted.`)) {
+      await fetch('/api/speakers/' + p.name, { method: 'DELETE' }); load(); } };
+    d.append(n, b); P.appendChild(d);
+  }
+}
+function show() { $('say').textContent = step < LINES.length ? `${step + 1} of ${LINES.length}: “${LINES[step]}”` : 'All done. Thank you!'; }
+$('consent').onchange = () => { $('recBtn').disabled = !$('consent').checked || step >= LINES.length; };
+
+async function record() {
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  chunks = []; rec = new MediaRecorder(stream);
+  rec.ondataavailable = e => chunks.push(e.data);
+  const done = new Promise(res => rec.onstop = res);
+  rec.start(); return done;
+}
+function stop() { if (rec && rec.state !== 'inactive') rec.stop(); stream && stream.getTracks().forEach(t => t.stop()); }
+
+$('recBtn').onclick = async () => {
+  if (rec && rec.state === 'recording') { stop(); return; }
+  $('recBtn').textContent = '■ Done reading'; $('recBtn').classList.add('rec'); $('msg').textContent = 'Listening…';
+  await record();
+  $('recBtn').textContent = '● Start reading'; $('recBtn').classList.remove('rec'); $('msg').textContent = 'Saving…';
+  const who = $('who').value;
+  const r = await fetch(`/api/speakers/${who}/sample?consent=true`, { method: 'POST', body: new Blob(chunks) });
+  const j = await r.json();
+  if (r.ok) { step++; $('msg').innerHTML = `<span class="ok">Got it (${j.samples} samples).</span>`; show(); load(); }
+  else $('msg').innerHTML = `<span class="warn">${j.detail || 'That didn’t work'}: please read it again.</span>`;
+  $('recBtn').disabled = step >= LINES.length;
+};
+
+$('testBtn').onclick = async () => {
+  if (rec && rec.state === 'recording') { stop(); return; }
+  $('testBtn').textContent = '■ Stop'; $('testMsg').textContent = 'Listening…';
+  await record();
+  $('testBtn').textContent = '● Try my voice';
+  const j = await (await fetch('/api/speakers/test', { method: 'POST', body: new Blob(chunks) })).json();
+  const sc = Object.entries(j.scores || {}).map(([k, v]) => `${k} ${v}`).join(', ');
+  $('testMsg').innerHTML = j.speaker === 'unknown' ? `<span class="warn">Not sure who that is</span> <span class="hint">(${sc || 'too short'})</span>`
+    : `<span class="ok">Sounds like ${j.speaker[0].toUpperCase() + j.speaker.slice(1)}</span> <span class="hint">(${sc})</span>`;
+};
+show(); load();
+</script>
+</body>
+</html>

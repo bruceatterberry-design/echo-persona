@@ -34,7 +34,7 @@ echo "Copying to the encrypted off-site copy…"
 rsync -a --exclude 'incoming/' --exclude 'staging/' "$DATA/" "$MNT/EchoPersona-Data/"
 mkdir -p "$MNT/EchoPersona-Mac"
 SNAP=$(curl -s -X POST 127.0.0.1:8765/api/memory/backup | python3 -c "import json,sys; print(json.load(sys.stdin)['backup'])" 2>/dev/null || true)
-[[ -n "$SNAP" && -f "$SNAP" ]] && cp "$SNAP" "$MNT/EchoPersona-Mac/memory.sqlite" || cp "$ROOT/data/memory.sqlite" "$MNT/EchoPersona-Mac/memory.sqlite"
+[[ -n "$SNAP" && -f "$SNAP" ]] && cp "$SNAP" "$MNT/EchoPersona-Mac/memory.sqlite" || sqlite3 "$ROOT/data/memory.sqlite" ".backup '$MNT/EchoPersona-Mac/memory.sqlite'"   # WAL mode: a plain cp would miss data
 rsync -a "$ROOT/data/personality/" "$MNT/EchoPersona-Mac/personality/"
 rsync -a "$ROOT/config/" "$MNT/EchoPersona-Mac/config/"
 mkdir -p "$MNT/EchoPersona-Mac/launchagents" && cp ~/Library/LaunchAgents/com.echopersona.*.plist "$MNT/EchoPersona-Mac/launchagents/"

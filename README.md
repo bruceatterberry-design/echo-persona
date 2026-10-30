@@ -19,9 +19,25 @@ uploaded or sent to any outside service. (The one optional exception, switched o
 - **Android Collector app (optional):** guided daily sessions that record your voice and face video on your phone, and
   copy to the Mac over a USB cable only (the app has no internet permission).
 
-> **⚠️ Alpha software.** Echo Persona is early, experimental software (version 0.2.0). Expect rough edges, breaking
+> **⚠️ Alpha software.** Echo Persona is early, experimental software (version 0.3.0). Expect rough edges, breaking
 > changes between versions, and features that have only been tested on one Mac. Keep backups of your recordings
 > (`scripts/backup_dataset.sh`) and don't rely on it for anything important yet.
+
+## What's new in 0.3.0
+- **Life memories.** Memories can carry when they happened (childhood, teens, young adult, adult, recent; year; your
+  own words), who was there and where. Repeats are merged instead of piling up, and memories that may contradict each
+  other are set aside for you to decide (Keep 1 / Keep 2 / Both are true); nothing is overwritten automatically.
+- **Search by meaning** with a small local model (`ollama pull nomic-embed-text`, 274 MB): a question finds related
+  memories and past conversations even when they share no words. Falls back to keyword search without it.
+- **"Tell me a memory" on the phone** (Collector 0.3.0): audio-only stories, 3 questions per session from different
+  times of life. After "Copy from phone", Echo transcribes them and suggests memories, each with your exact words as
+  evidence. Review them on the new **My memories** page (fix, keep or reject, replay the recording, life-story view).
+- **Echo asks you about your life**, now and then, but only when it recognises *your* voice (or when you say "ask me
+  something"). Your answers become suggestions on My memories.
+- **Who's talking:** local speaker recognition (sherpa-onnx + WeSpeaker, 26.5 MB) tells the owner's voice from the
+  loved one's; the loved one adds their voice on the **Who's talking** page with their consent. See docs/SPEAKERS.md.
+- **Personality versions and checks:** every change to "How I talk" can be compared and undone, and a small set of
+  checks (honesty, identity, no pet names for the owner, no invented quotes, short replies) runs through the real prompt.
 
 ## What's new in 0.2.0
 - **Five new expressions from your own recordings:** joy, surprised, sad, angry and bewildered. Record them with the
@@ -92,6 +108,9 @@ brew install uv ffmpeg ollama
 uv sync && (cd tts && uv sync)
 brew services start ollama   # or: ollama serve
 ollama pull llama3.1:8b
+ollama pull nomic-embed-text   # memory search by meaning (274 MB)
+mkdir -p models/speaker && curl -L -o models/speaker/wespeaker_en_voxceleb_resnet34.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx   # who's talking (26.5 MB)
 scripts/build_face_tools.sh       # Apple Vision face finder (Swift)
 ```
 Download the speech and voice models once (about 5 GB; Echo runs offline afterwards):

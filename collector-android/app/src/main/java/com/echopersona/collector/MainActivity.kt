@@ -79,8 +79,9 @@ fun App(store: Store) {
     var refresh by remember { mutableIntStateOf(0) }
     when (screen) {
         "consent" -> Consent(store) { screen = "home" }
-        "home" -> Home(store, refresh, { screen = "expressions" }) { screen = "session" }
+        "home" -> Home(store, refresh, { screen = "expressions" }, { screen = "memories" }) { screen = "session" }
         "session" -> SessionScreen(store) { refresh++; screen = "home" }
+        "memories" -> SessionScreen(store, memories = true) { refresh++; screen = "home" }
         "expressions" -> SessionScreen(store, expressions = true) { refresh++; screen = "home" }
     }
 }
@@ -99,7 +100,7 @@ fun Consent(store: Store, done: () -> Unit) {
 }
 
 @Composable
-fun Home(store: Store, refresh: Int, expressions: () -> Unit, start: () -> Unit) {
+fun Home(store: Store, refresh: Int, expressions: () -> Unit, memories: () -> Unit, start: () -> Unit) {
     val ctx = LocalContext.current
     val recovered = remember(refresh) { store.recoverOpenSessions() }
     var times by remember { mutableStateOf(Reminders.times(ctx)) }
@@ -139,6 +140,9 @@ fun Home(store: Store, refresh: Int, expressions: () -> Unit, start: () -> Unit)
         }
         Button(start, enabled = !paused, modifier = Modifier.fillMaxWidth().height(56.dp)) {
             Text(if (paused) "Collection paused" else "Start a session (about 15 min)", fontSize = 17.sp)
+        }
+        OutlinedButton(memories, enabled = !paused, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+            Text("Tell me a memory (3 questions · about 10 min)", fontSize = 15.sp)
         }
         OutlinedButton(expressions, enabled = !paused, modifier = Modifier.fillMaxWidth().height(52.dp)) {
             Text("Record my expressions (joy, surprised, sad, angry, bewildered · about 3 min)", fontSize = 15.sp)
@@ -182,11 +186,15 @@ private fun keptTaskIds(store: Store): Set<String> {
 
 @SuppressLint("MissingPermission")
 @Composable
-fun SessionScreen(store: Store, expressions: Boolean = false, exit: () -> Unit) {
+fun SessionScreen(store: Store, expressions: Boolean = false, memories: Boolean = false, exit: () -> Unit) {
     val ctx = LocalContext.current
     val activity = ctx as MainActivity
     val lifecycle = LocalLifecycleOwner.current
-    val plan = remember { if (expressions) Plan.expressions() else Plan.session(ctx, keptTaskIds(store)) }
+    val plan = remember { when {
+        expressions -> Plan.expressions()
+        memories -> Plan.memories(ctx, keptTaskIds(store))
+        else -> Plan.session(ctx, keptTaskIds(store))
+    } }
     val session = remember { store.newSession() }
     var i by remember { mutableIntStateOf(0) }
     var recording by remember { mutableStateOf(false) }
@@ -199,7 +207,8 @@ fun SessionScreen(store: Store, expressions: Boolean = false, exit: () -> Unit) 
     LaunchedEffect(Unit) { if (!granted) askPerms.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)) }
 
     val task = plan.getOrNull(i)
-    val camera = task != null && task.kind != Kind.VOICE
+    val audioOnly = task?.kind == Kind.VOICE || task?.kind == Kind.MEMORY
+    val camera = task != null && !audioOnly
     val previewView = remember { PreviewView(ctx).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     var videoCapture by remember { mutableStateOf<VideoCapture<Recorder>?>(null) }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
@@ -263,7 +272,7 @@ fun SessionScreen(store: Store, expressions: Boolean = false, exit: () -> Unit) 
     }
     fun startRec() {
         error = null
-        if (task.kind == Kind.VOICE) {
+        if (audioOnly) {
             val f = store.nextTakeFile(session, "wav")
             wav = WavRecorder(f).also { it.start() }
             lastTake = f to 0L
@@ -304,6 +313,8 @@ fun SessionScreen(store: Store, expressions: Boolean = false, exit: () -> Unit) 
         Column(Modifier.weight(1f).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Step ${i + 1} of ${plan.size} · ${task.category.replace('_', ' ')}", color = Accent, fontSize = 13.sp, letterSpacing = 1.sp)
             Text(task.title, color = Dim, fontSize = 15.sp)
+            if (task.kind == Kind.MEMORY && !recording && lastTake == null)
+                Text("Tell it like you'd tell someone you love: when it was, who was there, where, and what happened. Skip any question you'd rather not answer.", color = Dim, fontSize = 14.sp)
             Text(task.text, color = TextC, fontSize = if (task.kind == Kind.VOICE) 26.sp else 21.sp, lineHeight = 32.sp)
             if (camera) {
                 if (granted) AndroidView({ previewView }, Modifier.fillMaxWidth().weight(1f))
@@ -313,7 +324,8 @@ fun SessionScreen(store: Store, expressions: Boolean = false, exit: () -> Unit) 
                 LinearProgressIndicator(progress = { level.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(10.dp),
                     color = if (level > 0.9f) Rec else Good)
             }
-            Text(if (recording) "%d s  (about %d s is plenty)".format(elapsed / 1000, task.seconds)
+            Text(if (recording && task.kind == Kind.MEMORY) "%d:%02d  · take your time, press Stop when you're done".format(elapsed / 60000, elapsed / 1000 % 60)
+                 else if (recording) "%d s  (about %d s is plenty)".format(elapsed / 1000, task.seconds)
                  else if (saving) "Saving…" else if (lastTake != null) "Keep this take, or record it again?" else if (photo) "Press Take photo when you're ready." else "Press Record when you're ready.",
                 color = Dim)
             error?.let { Text(it, color = Warn) }
@@ -346,7 +358,7 @@ private fun captureInfo(f: File, kind: Kind): JSONObject = JSONObject().apply {
     if (kind == Kind.PHOTO) {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(f.absolutePath, o)
         put("format", "jpeg"); put("camera", "front"); put("width", o.outWidth); put("height", o.outHeight)
-    } else if (kind == Kind.VOICE) {
+    } else if (kind == Kind.VOICE || kind == Kind.MEMORY) {
         put("format", "wav/pcm_s16le"); put("sample_rate", 48000); put("channels", 1)
         put("capture", JSONObject().put("source", "MIC").put("processing", "none"))
     } else {

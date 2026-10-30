@@ -3,13 +3,14 @@ package com.echopersona.collector
 import android.content.Context
 import org.json.JSONArray
 
-enum class Kind { FACE, VOICE, ANSWER, PHOTO }
+enum class Kind { FACE, VOICE, ANSWER, PHOTO, MEMORY }
 
 /** One step in a session. FACE = front-camera video (with sound); VOICE = read aloud (WAV); ANSWER = own words (video);
- *  PHOTO = a full-resolution still from the front camera (sharper than video on phones with small front sensors). */
+ *  PHOTO = a full-resolution still from the front camera (sharper than video on phones with small front sensors);
+ *  MEMORY = a life memory told in your own words (WAV, no camera, as long as you like). */
 data class Task(
     val id: String, val kind: Kind, val category: String, val title: String, val text: String,
-    val seconds: Int, val expressionLabel: String? = null,
+    val seconds: Int, val expressionLabel: String? = null, val lifePeriod: String? = null,
 )
 
 object Plan {
@@ -52,6 +53,21 @@ object Plan {
             Task("face-$label", Kind.FACE, "face", "$title (video)",
                 "Start relaxed. Slowly make the face, hold it for a few seconds, then relax again. $how", 10, label),
         )
+    }
+
+    private val PERIOD_TITLE = mapOf("childhood" to "Childhood", "teen" to "Teenage years", "young_adult" to "Young adult",
+        "adult" to "Grown-up life", "recent" to "These days", "unknown" to "Any memory")
+
+    /** "Tell me a memory": 3 questions from different times of life, unanswered ones first (about 10 minutes). */
+    fun memories(context: Context, done: Set<String>): List<Task> {
+        val arr = JSONArray(context.assets.open("memories.json").bufferedReader().readText())
+        val all = (0 until arr.length()).map { i ->
+            val p = arr.getJSONObject(i)
+            val period = p.getString("period")
+            Task(p.getString("id"), Kind.MEMORY, "memory", PERIOD_TITLE[period] ?: "Memory", p.getString("text"), 180,
+                lifePeriod = period)
+        }.shuffledWithin(done)
+        return all.groupBy { it.lifePeriod }.values.sortedBy { g -> g.first().id in done }.map { it.first() }.take(3)
     }
 
     fun prompts(context: Context): List<Task> {
