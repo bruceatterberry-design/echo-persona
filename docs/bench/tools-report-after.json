@@ -1,0 +1,540 @@
+{
+ "when": "2026-10-31 13:20",
+ "model": "qwen3.5:9b-q4_K_M",
+ "summary": {
+  "cases": 16,
+  "passed": 16,
+  "tool_calls": 20,
+  "tool_calls_ok": 19,
+  "median_total_s_tools": 12.38,
+  "max_prompt_tokens": 4365
+ },
+ "rows": [
+  {
+   "case": "simple page",
+   "question": "What does https://example.com say?",
+   "answer": "[neutral] I read that page for you, the loved one. It's the example domain used in documentation examples without needing permission, and it's not a service to rely on for testing or monitoring purposes. That's all it says.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "example.com",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 1180,
+     "ms": 2104
+    }
+   ],
+   "sources": [
+    {
+     "title": "Example Domain",
+     "url": "https://example.com/"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 4.71,
+   "total_s": 7.35,
+   "prompt_tokens": 2559,
+   "rounds": 1,
+   "page_chars": 916,
+   "pages_read": 1
+  },
+  {
+   "case": "fact in long page",
+   "question": "Can you read https://en.wikipedia.org/wiki/Crappie and tell me the scientific genus of crappie?",
+   "answer": "[smiling] Sure thing! According to Wikipedia, crappie belong to the genus *Pomoxis*. The name comes from Greek words meaning \"sharp cover,\" which refers to their spiny gill covers. There are two species: black crappie (*Pomoxis nigromaculatus*) and white crappie (*Pomoxis annularis*).",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "en.wikipedia.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 4820,
+     "ms": 373
+    }
+   ],
+   "sources": [
+    {
+     "title": "Crappie - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Crappie"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 7.77,
+   "total_s": 12.3,
+   "prompt_tokens": 3581,
+   "rounds": 1,
+   "page_chars": 4500,
+   "pages_read": 1
+  },
+  {
+   "case": "gov page",
+   "question": "Read https://www.nps.gov/yell/index.htm and tell me which park it's about.",
+   "answer": "[smiling] This page is about Yellowstone National Park. It's the U.S. National Park Service website for Yellowstone, which covers topics like weather, road conditions, lodging, safety with wildlife, and more.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "www.nps.gov",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 1798,
+     "ms": 169
+    }
+   ],
+   "sources": [
+    {
+     "title": "Yellowstone National Park (U.S. National Park Service)",
+     "url": "https://www.nps.gov/yell/index.htm"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 3.62,
+   "total_s": 6.09,
+   "prompt_tokens": 2749,
+   "rounds": 1,
+   "page_chars": 1480,
+   "pages_read": 1
+  },
+  {
+   "case": "bare address",
+   "question": "What is on www.loc.gov/about/ ?",
+   "answer": "[smiling] The page about www.loc.gov/about/ tells me that the Library of Congress is the largest library in the world, serving as the main research arm of the U.S. Congress and home to the Copyright Office. It mentions several key parts like the Office of the Librarian, Congressional Research Service, Copyright Office, and various collection divisions. The page also notes they have a strategic plan for FY2024-FY2028 available to view or download.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "www.loc.gov",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 3236,
+     "ms": 193
+    }
+   ],
+   "sources": [
+    {
+     "title": "About the Library of Congress | Library of Congress",
+     "url": "https://www.loc.gov/about/"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 4.57,
+   "total_s": 10.18,
+   "prompt_tokens": 2918,
+   "rounds": 1,
+   "page_chars": 2929,
+   "pages_read": 1
+  },
+  {
+   "case": "docs question",
+   "question": "Look at https://docs.python.org/3/library/json.html and tell me which function turns a Python object into a JSON string.",
+   "answer": "[smiling] The function that turns a Python object into a JSON string is `json.dumps()`. I found this on the Python 3.15.2 documentation site (docs.python.org). It takes a Python data structure and returns its JSON string representation.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "docs.python.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 4868,
+     "ms": 224
+    }
+   ],
+   "sources": [
+    {
+     "title": "json \u2014 JSON encoder and decoder \u2014 Python 3.15.2 documentation",
+     "url": "https://docs.python.org/3/library/json.html"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 7.54,
+   "total_s": 10.66,
+   "prompt_tokens": 3490,
+   "rounds": 1,
+   "page_chars": 4500,
+   "pages_read": 1
+  },
+  {
+   "case": "links",
+   "question": "What links are on https://www.gutenberg.org/ebooks/1342 ?",
+   "answer": "[smiling] That page has quite a few links! Here are the main ones from Project Gutenberg for Pride and Prejudice:\n\n- Read online now (HTML version)\n- EPUB3 files for most devices\n- Plain text version\n- Various Kindle formats (both new and older models)\n- Older e-reader EPUBs without images\n- Links to send the book to Amazon/Kindle\n- Dropbox and Google Drive versions\n- A zip file with HTML downloads\n- Links to other books readers downloaded\n- Information about Harvard Classics\n\nWould you like me to open any of these for you?",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "page_links",
+     "host": "www.gutenberg.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 2173,
+     "ms": 334
+    }
+   ],
+   "sources": [],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 5.17,
+   "total_s": 12.38,
+   "prompt_tokens": 2995,
+   "rounds": 1,
+   "page_chars": 1832,
+   "pages_read": 0
+  },
+  {
+   "case": "dead site",
+   "question": "Please read https://this-site-does-not-exist-echo-test.com and summarise it.",
+   "answer": "[neutral] I wasn\u2019t able to read that page \u2014 it looks like the site doesn\u2019t exist or isn\u2019t accessible right now. Would you like me to try a different address, or perhaps search for what you\u2019re looking for?",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "this-site-does-not-exist-echo-test.com",
+     "ok": false,
+     "why": "given",
+     "outcome": "failed",
+     "chars": 88,
+     "ms": 58
+    }
+   ],
+   "sources": [],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 1.69,
+   "total_s": 4.37,
+   "prompt_tokens": 2344,
+   "rounds": 1,
+   "page_chars": 0,
+   "pages_read": 0
+  },
+  {
+   "case": "research: follow 1 link",
+   "question": "Research this for me: start at https://docs.python.org/3/library/index.html and follow the links to find what the json module's dumps function does.",
+   "answer": "[attentive] Sure, let me follow that link to the json module page. I found it! From Python's official documentation (python.org), the json.dumps function converts a Python object into a JSON-formatted string. It takes data like lists, dictionaries, and other objects and turns them into text that follows the JSON standard. You can also customize how it formats the output\u2014like sorting keys alphabetically or adding indentation for readability\u2014and even handle special types like complex numbers with a custom function.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "page_links",
+     "host": "docs.python.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 2473,
+     "ms": 170
+    },
+    {
+     "name": "read_webpage",
+     "host": "docs.python.org",
+     "ok": true,
+     "why": "link",
+     "outcome": "ok",
+     "chars": 2168,
+     "ms": 180
+    }
+   ],
+   "sources": [
+    {
+     "title": "json \u2014 JSON encoder and decoder \u2014 Python 3.15.2 documentation",
+     "url": "https://docs.python.org/3/library/json.html"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 5.06,
+   "total_s": 18.83,
+   "prompt_tokens": 3806,
+   "rounds": 2,
+   "page_chars": 3922,
+   "pages_read": 1
+  },
+  {
+   "case": "research: wikipedia hop",
+   "question": "Start at https://en.wikipedia.org/wiki/Special_education and follow the links to the article about the Individuals with Disabilities Education Act. What year was it first passed?",
+   "answer": "[smiling] The Individuals with Disabilities Education Act was first passed in 1975 when it was originally called the Education for All Handicapped Children Act. It was renamed IDEA in 1990, according to Wikipedia.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "page_links",
+     "host": "en.wikipedia.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 3245,
+     "ms": 484
+    },
+    {
+     "name": "read_webpage",
+     "host": "en.wikipedia.org",
+     "ok": true,
+     "why": "link",
+     "outcome": "ok",
+     "chars": 2192,
+     "ms": 398
+    }
+   ],
+   "sources": [
+    {
+     "title": "Individuals with Disabilities Education Act - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Individuals_with_Disabilities_Education_Act"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 13.98,
+   "total_s": 16.8,
+   "prompt_tokens": 3882,
+   "rounds": 2,
+   "page_chars": 4719,
+   "pages_read": 1
+  },
+  {
+   "case": "research: author page",
+   "question": "Dig into https://www.gutenberg.org/ebooks/1342 and follow the links to find other books by the same author.",
+   "answer": "[smiling] I found Jane Austen's works on Project Gutenberg! The page shows her major novels including Sense and Sensibility, Emma, Persuasion, Northanger Abbey, Mansfield Park, and Lady Susan. There are also some lesser-known works like \"Love and Freindship\" (with the original spelling), \"The Letters of Jane Austen,\" and even a fragment from 1817. The site lists about 25 different versions and editions available for free download.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "page_links",
+     "host": "www.gutenberg.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 2177,
+     "ms": 734
+    },
+    {
+     "name": "read_webpage",
+     "host": "www.gutenberg.org",
+     "ok": true,
+     "why": "link",
+     "outcome": "ok",
+     "chars": 1897,
+     "ms": 259
+    }
+   ],
+   "sources": [
+    {
+     "title": "Books by Austen, Jane - Project Gutenberg",
+     "url": "https://www.gutenberg.org/ebooks/author/68"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 13.32,
+   "total_s": 19.12,
+   "prompt_tokens": 3762,
+   "rounds": 2,
+   "page_chars": 3420,
+   "pages_read": 1
+  },
+  {
+   "case": "search: band formed",
+   "question": "Can you look up when Steely Dan was formed?",
+   "answer": "[smiling] Steely Dan was formed in 1971 by Walter Becker and Donald Fagen in Annandale-on-Hudson, New York. They met while they were students at Bard College and started the band together.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "web_search",
+     "host": "duckduckgo.com",
+     "ok": true,
+     "why": "-",
+     "outcome": "ok",
+     "chars": 2512,
+     "ms": 827
+    },
+    {
+     "name": "read_webpage",
+     "host": "en.wikipedia.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 4826,
+     "ms": 459
+    }
+   ],
+   "sources": [
+    {
+     "title": "Steely Dan - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Steely_Dan"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 12.19,
+   "total_s": 14.96,
+   "prompt_tokens": 4173,
+   "rounds": 1,
+   "page_chars": 6684,
+   "pages_read": 1
+  },
+  {
+   "case": "search: mountain",
+   "question": "Search the web for how tall Mount Rainier is.",
+   "answer": "[smiling] Mount Rainier stands at 14,406 feet (4,391 meters) tall, according to Wikipedia. It\u2019s the highest mountain in Washington state and one of the most prominent peaks in the contiguous United States.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "web_search",
+     "host": "duckduckgo.com",
+     "ok": true,
+     "why": "-",
+     "outcome": "ok",
+     "chars": 2570,
+     "ms": 779
+    },
+    {
+     "name": "read_webpage",
+     "host": "en.wikipedia.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 4832,
+     "ms": 468
+    }
+   ],
+   "sources": [
+    {
+     "title": "Mount Rainier - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Mount_Rainier"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 13.01,
+   "total_s": 16.01,
+   "prompt_tokens": 4337,
+   "rounds": 1,
+   "page_chars": 6744,
+   "pages_read": 1
+  },
+  {
+   "case": "search: song year",
+   "question": "Look up what year Dan Fogelberg released the song Longer.",
+   "answer": "[smiling] Dan Fogelberg released \"Longer\" in 1979, specifically on December 8th that year. It came from his album *Phoenix*. I found this information on Wikipedia.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "web_search",
+     "host": "duckduckgo.com",
+     "ok": true,
+     "why": "-",
+     "outcome": "ok",
+     "chars": 1914,
+     "ms": 713
+    },
+    {
+     "name": "read_webpage",
+     "host": "en.wikipedia.org",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 4818,
+     "ms": 318
+    }
+   ],
+   "sources": [
+    {
+     "title": "Longer - Wikipedia",
+     "url": "https://en.wikipedia.org/wiki/Longer"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 12.95,
+   "total_s": 15.49,
+   "prompt_tokens": 4365,
+   "rounds": 1,
+   "page_chars": 6042,
+   "pages_read": 1
+  },
+  {
+   "case": "js-only page",
+   "question": "Who are some of the people quoted on https://quotes.toscrape.com/js/ ?",
+   "answer": "[smiling] Based on the Quotes to Scrape website, I can see some famous people quoted there include Albert Einstein, J.K. Rowling, Jane Austen, Marilyn Monroe, Andr\u00e9 Gide, Thomas A. Edison, Eleanor Roosevelt, and Steve Martin. Each quote comes from a different notable person across various fields like science, literature, entertainment, and philosophy.",
+   "tool_called": true,
+   "calls": [
+    {
+     "name": "read_webpage",
+     "host": "quotes.toscrape.com",
+     "ok": true,
+     "why": "given",
+     "outcome": "ok",
+     "chars": 1696,
+     "ms": 2439
+    }
+   ],
+   "sources": [
+    {
+     "title": "Quotes to Scrape",
+     "url": "https://quotes.toscrape.com/js/"
+    }
+   ],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 5.91,
+   "total_s": 10.18,
+   "prompt_tokens": 2712,
+   "rounds": 1,
+   "page_chars": 1419,
+   "pages_read": 1
+  },
+  {
+   "case": "plain chat (no tools offered)",
+   "question": "How are you feeling today?",
+   "answer": "[smiling] I'm doing well, thank you for asking. It's a nice day to just be here and chat with you. How about you?",
+   "tool_called": false,
+   "calls": [],
+   "sources": [],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 7.8,
+   "total_s": 9.62,
+   "prompt_tokens": 1564,
+   "rounds": 1,
+   "page_chars": 0,
+   "pages_read": 0
+  },
+  {
+   "case": "web word, no address",
+   "question": "Is the internet useful for finding recipes?",
+   "answer": "[smiling] Yes, the internet is very useful for finding recipes! It offers a vast array of options, from quick weeknight meals to elaborate holiday dishes. Many sites provide step-by-step instructions, ingredient lists, and even nutritional information. Some also allow you to adjust serving sizes or substitute ingredients based on what you have in your pantry. Would you like me to search for a specific recipe or type of dish?",
+   "tool_called": false,
+   "calls": [],
+   "sources": [],
+   "tool_ok": true,
+   "facts_ok": true,
+   "asked_owner_to_open": false,
+   "first_word_s": 1.07,
+   "total_s": 5.88,
+   "prompt_tokens": 2237,
+   "rounds": 1,
+   "page_chars": 0,
+   "pages_read": 0
+  }
+ ]
+}

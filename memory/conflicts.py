@@ -10,6 +10,8 @@ from typing import Callable
 
 import httpx
 
+from core.llm import chat_post
+
 from memory.store import FLAG_WITHOUT_JUDGE, Memory, MemoryStore
 
 # judge(old, new) -> (contradicts, why); None if it couldn't decide
@@ -41,7 +43,8 @@ SCHEMA = {"type": "object", "properties": {"contradicts": {"type": "boolean"}, "
 def ollama_judge(host: str, model: str, timeout: float = 60) -> Judge:
     def judge(a: str, b: str):
         try:
-            r = httpx.post(f"{host}/api/chat", timeout=timeout, json={
+            r = chat_post(host, timeout=timeout, body={"think": False,   # background job: no thinking (slow)
+        
                 "model": model, "stream": False, "keep_alive": "24h", "format": SCHEMA,
                 "options": {"temperature": 0, "num_predict": 200},
                 "messages": [{"role": "user", "content": PROMPT.format(a=a, b=b)}]})

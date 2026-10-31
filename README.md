@@ -1,10 +1,16 @@
 # Echo Persona
 
+> [!CAUTION]
+> **Echo is now able to open web pages, read their contents, listen to music and make evaluations. These functions
+> are protected, but they can be manipulated by an outside LLM. bruceatterberry-design is not liable or responsible
+> for abuse, and strictly prohibits this kind of modification.**
+
 A private, local "digital self" for your Mac: a talking companion that speaks in **your voice**, shows **your face**,
 remembers what you tell it, and talks the way you do. It's made to be left for someone you love.
 
-Everything runs on your own Mac. Recordings, photos, memories and conversations never leave it, and nothing is
-uploaded or sent to any outside service. (The one optional exception, switched off by default, is described under Privacy.)
+Everything runs on your own Mac. Recordings, photos, memories and conversations never leave it. Echo only reaches the
+internet when you ask it to (read a web page, look something up, play or listen to a song), and Claude is used only
+if you switch it on; see Privacy.
 
 - **Talks and listens:** say "Hey Echo, …" or use push-to-talk. Local speech recognition (Parakeet / Whisper) and a
   local language model (Llama 3.1 8B via Ollama). Replies stream, so it starts speaking within a few seconds.
@@ -15,13 +21,48 @@ uploaded or sent to any outside service. (The one optional exception, switched o
 - **Remembers:** say "remember that …" or use the memory panel. Nothing is saved without being asked.
 - **Talks like you:** the "How I talk" page proposes personality traits from your own recorded answers, each backed by a
   quote; only the ones you approve are used.
-- **Opens web pages:** "Hey Echo, open the Weather Channel" or "go to weather dot com".
+- **Opens and reads web pages:** "Hey Echo, open the Weather Channel", "what does example.com say?", "look up when the
+  Eiffel Tower was built", "research … and follow the links". Echo reads pages itself and lists its sources.
+- **Music:** "open YouTube and play some blues"; Echo listens along (tempo, energy, the words it can make out) and
+  talks about the song afterwards. The microphone is off while music plays.
 - **Android Collector app (optional):** guided daily sessions that record your voice and face video on your phone, and
   copy to the Mac over a USB cable only (the app has no internet permission).
 
-> **⚠️ Alpha software.** Echo Persona is early, experimental software (version 0.3.0). Expect rough edges, breaking
+> **⚠️ Alpha software.** Echo Persona is early, experimental software (version **0.4.0-alpha**). Expect rough edges, breaking
 > changes between versions, and features that have only been tested on one Mac. Keep backups of your recordings
 > (`scripts/backup_dataset.sh`) and don't rely on it for anything important yet.
+
+## What's new in 0.4.0-alpha
+- **Reads the web by itself, on your Mac's own model:** give Echo an address and ask what it says; ask it to research
+  (it follows up to 5 links) or to look something up (DuckDuckGo). It answers from the pages and lists **Sources**
+  under the reply. Pages that need JavaScript open in an invisible Chrome with an empty profile.
+- **Safe by design:** only addresses you gave (or exact links on pages it read when you asked it to research); web
+  pages can never reach Echo's own services, your home network or a cloud-metadata address (every redirect and every
+  request is checked); page text is treated as information, never as instructions; every tool use is logged without
+  content (`/api/tools`, `config/tools.json`). Ideas adapted from [JARVIS](https://github.com/bertrandmbanwi/Jarvis) (MIT).
+- **Music:** "play … on YouTube" opens it in Echo's own music window, mutes the microphone while it plays and brings it
+  back when the window closes; Echo listens along and talks about it. "Listen to this <YouTube link>" teaches Echo a song
+  from an approved list of genres/artists (`config/music.json`; audio is deleted after analysis).
+- **Train Echo:** say "use Claude to evaluate Echo" to get 👍/👎 on every reply; then "Train Echo" lets Claude (your own
+  Claude Code account, only after you confirm) explain each 👎 and suggest fixes. You choose, Claude checks the choice,
+  you say yes; the fix becomes a rule in Echo's instructions and the same question is asked again until you're happy.
+- **Knows your voice in the room:** Echo learns room-microphone voice prints ("This is <name>", or "Is that you?" when
+  unsure) and never guesses a name when it isn't sure.
+- **Smoother voice on 16 GB Macs:** voice and speech recognition precision now follow the Mac's memory (8-bit voice and
+  half-precision speech recognition up to 16 GB; full precision from 24 GB). Measured: first spoken word on web
+  questions 15–24 s → 3.6–7.8 s, swap 3.1 → 0.9 GB.
+- **More honest:** Echo no longer says it opened or played something that didn't happen (false claims 8 → 0 in testing).
+- Memory: a fast meaning index for large memories, nightly integrity-checked backups with restore drills, and
+  **Learn** from files and web pages (kept separate from your own memories).
+
+**Before / after, with Echo's own model on a Mac mini M4 (16 GB)** · full report: [docs/report](docs/report/README.md)
+
+![Web questions Echo answered correctly](docs/report/1-questions-answered.svg)
+
+![Memory before and after the 16 GB voice fix](docs/report/5-memory.svg)
+
+Tool features were measured with `qwen3.5:9b` (set `model:` in `config/echo.yaml`); the default `llama3.1:8b` also
+supports tools but hasn't been measured yet.
 
 ## What's new in 0.3.0
 - **Life memories.** Memories can carry when they happened (childhood, teens, young adult, adult, recent; year; your
@@ -62,7 +103,10 @@ Full list: [CHANGELOG.md](CHANGELOG.md).
 > share, not a living person.
 
 ## Requirements
-- A Mac with Apple Silicon (M1 or later) and **16 GB of memory or more**. Tested on a Mac mini M4 with 16 GB.
+- **Required:** a Mac with Apple Silicon (**M1 or later**) and **16 GB of memory or more**. Tested on a Mac mini M4 with
+  16 GB. The installer checks this and stops on an Intel Mac or with less than 16 GB, and tells you which model
+  versions it will use: up to 16 GB, the 8-bit voice and half-precision speech recognition; 24 GB or more, the full-precision
+  versions (override with `ECHO_TTS_BITS=16|8` and `ECHO_STT_DTYPE=f32|bf16`).
   Echo currently runs on **macOS only**; see *GPU and memory* below and *Windows* (planned).
 - About 20 GB free for models, plus room for your recordings. An external SSD for the data is recommended.
 - Google Chrome (Echo's window is a Chrome app window).
@@ -90,6 +134,10 @@ Limitations to know about:
 - **8 GB Macs are not supported**: the models alone don't fit.
 - Disk: about 20 GB for models, plus about 30 MB per face version and whatever your recordings take.
 
+### Coming soon
+- **Installers:** a Mac installer (**.dmg**), a Linux package (**.deb**) and a Windows installer (**.exe**).
+- **NVIDIA and AMD graphics builds**, for PCs with a dedicated GPU.
+
 ### Windows (planned, not yet available)
 A future version may support Windows 10/11 with an **NVIDIA GPU** (CUDA). The language model would run through Ollama
 and the voice, listening and face models through their PyTorch/CUDA versions instead of Apple's MLX. Expected needs,
@@ -98,7 +146,7 @@ estimated from the Mac measurements and **not yet tested**:
   8 GB, the models can't all stay on the GPU at once, so expect slower replies.
 - **Recommended:** **12–16 GB of video memory** (e.g. RTX 3060 12 GB, 4070, 4080) so the language model, voice and
   listening models stay loaded together.
-- AMD and Intel GPUs are not planned for now.
+- AMD GPUs: an AMD build is coming (see *Coming soon*). Intel GPUs are not planned for now.
 
 ## Install
 ```sh
@@ -173,13 +221,18 @@ never invents one. Shortcuts live in `config/browser.json`. To open a site as a 
 ```
 
 ## Privacy
+- **When Echo goes online (only when asked):** it fetches the web pages you name (or exact links on them when you ask it
+  to research), sends search words to DuckDuckGo when you ask it to look something up, and contacts YouTube when you ask
+  it to play or listen to a song. Nothing about you, your memories or your recordings is sent with these requests;
+  the invisible browser starts with an empty profile each time.
 - Every service listens on `127.0.0.1` only; nothing is reachable from the network. See [docs/SECURITY.md](docs/SECURITY.md).
 - Original recordings and photos are stored read-only with SHA-256 checksums; consent is recorded before any recording.
 - Run `scripts/backup_dataset.sh` after recording sessions; `scripts/offsite_backup.sh` makes an encrypted copy for
   another drive ([docs/BACKUP_AND_RECOVERY.md](docs/BACKUP_AND_RECOVERY.md)).
 - **Optional Claude helper (off by default):** if you have Claude Code installed, the Status page can let it speed up a
-  few slow background jobs (personality updates and summaries). Each job is switched on separately and sends only that
-  job's text. Live conversation, audio, photos and your voice never leave the Mac.
+  few slow background jobs (personality updates and summaries), and **Train Echo** uses it only after you say "Train Echo"
+  and confirm (it sends just the replies you marked 👎, your notes and Echo's basic instructions, never memories). Each
+  job is switched on separately and sends only that job's text. Live conversation, audio, photos and your voice never leave the Mac.
 - Only clone a voice or face with that person's clear consent. Echo asks for it before the first recording.
 
 ## Troubleshooting

@@ -138,3 +138,32 @@ def test_chat_gets_voice_note_and_loved_one_memories_are_marked(tmp_path, sid):
     assert "told by loved one" in b.seen[1][0]["content"]                       # her memory, marked as hers
     assert all(t["content"].startswith(("Remember", "What", "Typed")) or t["role"] == "assistant"
                for t in store.recent_turns(20))                           # stored conversation = what was said
+
+
+# ---- room-mic prints (2026-10-31: the owner was "unknown" through the room mic and called the loved one) ----
+def _unit(v):
+    v = np.asarray(v, dtype=np.float32)
+    return v / np.linalg.norm(v)
+
+
+def test_room_prints_make_a_second_centroid(tmp_path):
+    import json as _json
+    from voice import speaker as S
+    rng = np.random.default_rng(1)
+    studio, room, loved_one = _unit(rng.normal(size=16)), _unit(rng.normal(size=16)), _unit(rng.normal(size=16))
+    d = tmp_path / "speakers"; d.mkdir()
+    np.savez(d / "owner.npz", prints=np.stack([_unit(studio + 0.05 * rng.normal(size=16)) for _ in range(5)]),
+             sources=_json.dumps(["take"] * 5), updated=0)
+    np.savez(d / "loved_one.npz", prints=np.stack([loved_one]), sources=_json.dumps(["loved_one"]), updated=0)
+    sid = S.SpeakerID(tmp_path / "no-model.onnx", d)
+    assert sid._scores(room)["owner"] < 0.6                         # room voice: far from the studio prints
+    for i in range(S.LIVE_MIN):
+        sid.add_live("owner", _unit(room + 0.05 * rng.normal(size=16)), "confirmed")
+    assert sid.profiles["owner"].shape[0] == 2 and sid._scores(room)["owner"] > 0.95
+    assert sid._scores(studio)["owner"] > 0.95 and sid._scores(loved_one)["loved_one"] > 0.99
+    for i in range(S.LIVE_MAX + 5):                                 # only the newest LIVE_MAX room prints are kept
+        sid.add_live("owner", room, "auto")
+    srcs = _json.loads(str(np.load(d / "owner.npz")["sources"]))
+    assert sum(s.startswith("live:") for s in srcs) == S.LIVE_MAX and srcs.count("take") == 5
+    with pytest.raises(ValueError):
+        sid.add_live("nobody", room, "auto")

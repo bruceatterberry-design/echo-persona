@@ -4,6 +4,18 @@
 # Everything listens on 127.0.0.1 only. Undo with scripts/uninstall_autostart.sh.
 set -e
 ROOT="${0:A:h:h}"; LA=~/Library/LaunchAgents; UIDN=$(id -u); UV=/opt/homebrew/bin/uv
+
+# Hardware check (required: Apple Silicon M1 or later, 16 GB of memory or more). Model precision follows memory
+# (tts/hw.py): up to 16 GB → 8-bit voice + half-precision speech recognition; 24 GB or more → full precision.
+if [[ "$(uname -m)" != "arm64" ]]; then
+  echo "Echo Persona needs a Mac with Apple Silicon (M1 or later). This Mac is $(uname -m)."; exit 1
+fi
+MEM_GB=$(( $(sysctl -n hw.memsize) / 1073741824 ))
+if (( MEM_GB < 16 )); then
+  echo "Echo Persona needs 16 GB of memory or more; this Mac has ${MEM_GB} GB."; exit 1
+fi
+echo "Hardware: $(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo 'Apple Silicon'), ${MEM_GB} GB"
+echo "Models:   $(/usr/bin/python3 "$ROOT/tts/hw.py" 2>/dev/null || echo 'precision chosen when the voice starts')"
 mkdir -p "$LA" "$ROOT/logs"
 
 agent() {  # label, workdir, env-xml, program args...
@@ -34,7 +46,7 @@ PLIST
 }
 
 kv() { echo "<key>$1</key><string>$2</string>"; }
-agent com.echopersona.ollama "$ROOT" "$(kv OLLAMA_HOST 127.0.0.1:11434)$(kv OLLAMA_FLASH_ATTENTION 1)$(kv OLLAMA_KV_CACHE_TYPE q8_0)$(kv OLLAMA_KEEP_ALIVE 24h)" \
+agent com.echopersona.ollama "$ROOT" "$(kv OLLAMA_HOST 127.0.0.1:11434)$(kv OLLAMA_FLASH_ATTENTION 1)$(kv OLLAMA_KV_CACHE_TYPE q8_0)$(kv OLLAMA_CONTEXT_LENGTH 8192)$(kv LLAMA_ARG_CHECKPOINT_MIN_SPACING_NT 64)$(kv LLAMA_ARG_CTX_CHECKPOINTS 16)$(kv LLAMA_ARG_CACHE_RAM 1024)$(kv OLLAMA_KEEP_ALIVE 24h)" \
   /opt/homebrew/opt/ollama/bin/ollama serve
 agent com.echopersona.voice "$ROOT/tts" "$(kv HF_HUB_OFFLINE 1)$(kv HF_HUB_DISABLE_TELEMETRY 1)" \
   "$UV" run --frozen python service.py

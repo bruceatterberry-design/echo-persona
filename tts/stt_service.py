@@ -39,6 +39,15 @@ def load() -> None:
             from mlx_audio.stt import load as load_stt
             mx.set_cache_limit(CACHE_LIMIT)
             m = load_stt(MODEL)
+            import hw
+            if hw.stt_dtype() == "bf16":   # tts/hw.py: 16 GB Macs → bfloat16, 24 GB+ → full precision
+                # The weights come as float32 (618 M × 4 B = 2.5 GB). bfloat16 halves that (measured 2026-10-31:
+                # 2.51 → 1.28 GB; 12 of the owner's takes: same words, 2 differed by a final full stop; a bit faster),
+                # leaving room for the LLM and the voice on the shared GPU. ECHO_STT_DTYPE=f32 forces full precision.
+                import gc
+                m.set_dtype(mx.bfloat16)
+                gc.collect()
+                mx.clear_cache()
             m.generate(mx.array(np.zeros(16000, np.float32)))   # warm up
             state["model"], state["error"] = m, None
             print(f"speech recognition ready: {MODEL}", flush=True)

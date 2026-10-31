@@ -34,7 +34,7 @@
 </head>
 <body>
 <header><h1>MY MEMORIES</h1>
-  <span class="tab on" id="tabReview">To review</span><span class="tab" id="tabLife">My life story</span></header>
+  <span class="tab on" id="tabReview">To review</span><span class="tab" id="tabLife">My life story</span><span class="tab" id="tabLearn">Learn</span></header>
 <main id="main"></main>
 <script>
 const $ = id => document.getElementById(id);
@@ -98,7 +98,40 @@ async function life() {
     box.append(el('div', { className: 'life' }, m.content, meta ? el('div', { className: 'hint', textContent: meta }) : ''));
   }
 }
-const tabs = { tabReview: review, tabLife: life };
+async function learn() {
+  const M = $('main'); M.innerHTML = '';
+  M.append(el('div', { className: 'hint', textContent: 'Give me something to read and I\u2019ll learn it: a document (PDF, Word, text) or a web page. '
+    + 'I keep the original, and what I learn is marked “learned”: it never becomes a fact about your lives. Forget it any time.' }));
+  const file = el('input', { type: 'file', accept: '.pdf,.docx,.doc,.rtf,.odt,.txt,.md,.html,.htm' });
+  const url = el('input', { placeholder: 'https://… a web page', style: 'flex:1;min-width:240px' });
+  const title = el('input', { placeholder: 'Title (optional)' });
+  const msg = el('span', { className: 'hint' });
+  const go = async () => {
+    msg.textContent = 'Saving…';
+    let r;
+    if (file.files[0]) r = await fetch(`/api/learn/file?name=${encodeURIComponent(file.files[0].name)}&title=${encodeURIComponent(title.value)}`,
+                                        { method: 'POST', body: file.files[0] });
+    else if (url.value.trim()) r = await fetch('/api/learn/web', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ url: url.value.trim(), title: title.value }) });
+    else { msg.textContent = 'Choose a file or type a web address.'; return; }
+    const j = await r.json();
+    msg.textContent = r.ok ? 'Got it: I\u2019ll read it when it\u2019s quiet (usually within a minute).' : (j.detail || 'That didn\u2019t work.');
+    if (r.ok) setTimeout(learn, 1500);
+  };
+  M.append(el('div', { className: 'card' }, el('div', { className: 'row' }, file, url), el('div', { className: 'row' }, title,
+    el('button', { className: 'ok', textContent: 'Learn this', onclick: go }), msg)));
+  const jobs = await (await fetch('/api/learn')).json();
+  if (jobs.length) M.append(el('h2', { textContent: 'What I\u2019ve been given to read' }));
+  for (const j of jobs) {
+    const state = { queued: 'waiting to be read', done: `learned (${j.passages} passages)`, failed: 'couldn\u2019t read it: ' + (j.error || ''),
+                    forgotten: 'forgotten (can be brought back)' }[j.status] || j.status;
+    const btn = j.status === 'done' ? el('button', { className: 'no', textContent: 'Forget it', onclick: async () => { await fetch(`/api/learn/${j.id}/forget`, { method: 'POST' }); learn(); } })
+              : j.status === 'forgotten' ? el('button', { textContent: 'Bring back', onclick: async () => { await fetch(`/api/learn/${j.id}/restore`, { method: 'POST' }); learn(); } }) : '';
+    M.append(el('div', { className: 'card' }, el('div', {}, j.title), el('div', { className: 'hint', textContent:
+      `${j.kind === 'web' ? j.source : 'file: ' + j.source} · ${new Date(j.created * 1000).toLocaleDateString()} · ${state}` }), el('div', { className: 'row' }, btn)));
+  }
+}
+const tabs = { tabReview: review, tabLife: life, tabLearn: learn };
 for (const id in tabs) $(id).onclick = () => { for (const t in tabs) $(t).classList.toggle('on', t === id); tabs[id](); };
 review();
 </script>

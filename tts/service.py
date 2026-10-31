@@ -59,6 +59,15 @@ def load() -> None:
         state["ref_audio"] = str(REFS / f"ref-{REF_NAME}.wav")
         state["ref_text"] = refs[REF_NAME]["text"]
         state["model"] = load_model(Path(snapshot_download(MODEL)))
+        import hw
+        if hw.tts_bits() == 8:   # tts/hw.py: 16 GB Macs → 8-bit voice (1.61× vs 0.96× real time, −0.85 GB), 24 GB+ → 16-bit
+            import gc
+
+            import mlx.nn as nn
+            nn.quantize(state["model"].talker, group_size=64, bits=8)
+            gc.collect()
+            mx.clear_cache()
+        print("voice:", hw.describe(), flush=True)
         # decode the reference once, instead of re-reading and resampling the file for every sentence
         state["ref_audio"] = load_audio(state["ref_audio"], sample_rate=state["model"].sample_rate)
         synth("Hello.")  # warm up

@@ -17,3 +17,7 @@
 ## sherpa-onnx 2.0.1 (speaker recognition, 2026-10-30)
 Apache-2.0, https://github.com/k2-fsa/sherpa-onnx. Model: WeSpeaker ResNet34 (VoxCeleb), downloaded from the sherpa-onnx
 releases; check the WeSpeaker project's model licence before redistributing it.
+- **yt-dlp** 2026.10.26 (Unlicense, public domain): fetches audio of approved music videos from YouTube for Echo to analyse; audio deleted after. Added 2026-10-31 with the owner's OK.
+- **librosa** 1.0.0 (ISC): music analysis (tempo, key, loudness/energy). Added 2026-10-31 with the owner's OK. Pulls scikit-learn (BSD-3), soundfile (BSD-3), soxr (LGPL-2.1), pooch (BSD-3).
+- JARVIS (github.com/bertrandmbanwi/Jarvis, MIT): ideas adapted (not copied wholesale) in core/web.py, core/tools.py, core/permissions.py.
+- **Playwright** 1.64.1 for Python (Apache-2.0, Microsoft): drives the Google Chrome already installed (channel "chrome") for pages that need JavaScript (core/jsbrowser.py). No Chromium download. Added 2026-10-31 with the owner's OK. Pulls greenlet (MIT), pyee (MIT).

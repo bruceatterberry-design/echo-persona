@@ -1,0 +1,18 @@
+{
+  "_note": "Music Echo may listen to (approved by the owner 2026-10-31). the owner will add more. Genres are matched by Echo's judgement of the video's details; artists listed here are always approved.",
+  "approved_genres": [
+    "classical",
+    "classic rock",
+    "80s soft rock",
+    "80s pop rock",
+    "yacht rock",
+    "progressive rock",
+    "southern rock",
+    "blues"
+  ],
+  "approved_artists": [
+    "Steely Dan",
+    "Dan Fogelberg"
+  ],
+  "keep_audio": false
+}

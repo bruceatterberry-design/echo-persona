@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 log = logging.getLogger("echo.claude")
-JOBS = ("personality", "condense", "summaries")
+JOBS = ("personality", "condense", "summaries", "training")   # training: core/trainer.py, on only while training
 DEFAULT = {"enabled": False, "model": "sonnet", "timeout_s": 120, "daily_limit": 60,
            "jobs": {j: False for j in JOBS}}
 
@@ -96,6 +96,31 @@ class ClaudeHelper:
             self.stats["last_ok"] = time.strftime("%Y-%m-%d %H:%M")
             log.info("claude helper %s ok ms=%d", job, (time.time() - t0) * 1000)   # never the content
             return result
+
+    def logged_in(self) -> bool | None:
+        """Is the `claude` command signed in to the owner's account? (local check, uses no plan quota). None = can't tell."""
+        b = self.binary()
+        if not b:
+            return None
+        try:
+            r = subprocess.run([str(b), "auth", "status"], capture_output=True, text=True, timeout=20)
+            return bool(json.loads(r.stdout).get("loggedIn"))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def open_login(self) -> bool:
+        """Open a Terminal window running Claude's sign-in (it continues in the browser). the owner finishes it himself."""
+        b = self.binary()
+        if not b:
+            return False
+        cmd = f"'{b}' auth login"
+        try:
+            subprocess.run(["osascript", "-e", f'tell application "Terminal" to do script "{cmd}"',
+                            "-e", 'tell application "Terminal" to activate'], check=True, timeout=20, capture_output=True)
+            log.info("opened Claude sign-in")
+            return True
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     def test(self) -> dict:
         """A harmless check (no personal text): is the account reachable from Echo, and how long does a call take?"""

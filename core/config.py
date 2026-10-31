@@ -16,6 +16,8 @@ class LLMConfig(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     timeout_s: float = 120.0
     keep_alive: str = "24h"  # keep the model in memory so a reply after a quiet spell isn't slow
+    think: bool | None = None   # thinking models (qwen3.5): True/False; None = don't say (other models)
+    options: dict[str, float | int] = Field(default_factory=dict)   # extra sampling settings: top_p, top_k, min_p, …
 
 
 class ServerConfig(BaseModel):
@@ -34,6 +36,7 @@ class PersonaConfig(BaseModel):
     voice: VoiceConfig = VoiceConfig()
     server: ServerConfig = ServerConfig()
     personality_file: str = "config/personality.yaml"
+    owner_name: str = ""       # the owner's first name: "This is <name>" teaches Echo their voice; "Is that you, <name>?"
     loved_one_name: str = ""   # the person Echo mostly talks with; their name is used only now and then (blank = off)
     log_dir: str = "logs"
     memory_db: str = "data/memory.sqlite"  # relative to project root unless absolute

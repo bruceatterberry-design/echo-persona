@@ -1,3 +1,4 @@
+import time
 import pytest
 from fastapi.testclient import TestClient
 
@@ -119,6 +120,20 @@ def test_memory_api(tmp_path):
     assert c.delete(f"/api/memory/{mid}").status_code == 200
     assert c.delete(f"/api/memory/{mid}").status_code == 404
     assert c.get("/api/memory").json() == []
+    hid = c.get("/api/memory/hidden").json()                           # forget = hide (the owner, 2026-10-31)
+    assert [h["content"] for h in hid] == ["I served in the Army."]
+    assert c.post(f"/api/memory/{mid}/restore").json()["content"] == "I served in the Army."
+    assert [m["id"] for m in c.get("/api/memory").json()] == [mid] and c.get("/api/memory/hidden").json() == []
+    assert [v["action"] for v in c.get(f"/api/memory/{mid}/history").json()] == ["create", "correct", "hide", "restore"]
+    assert c.post("/api/memory/9999/restore").status_code == 404
+
+
+def test_clear_conversation_api_keeps_the_archive(tmp_path):
+    s = MemoryStore(tmp_path / "m.sqlite")
+    s.add_turn("user", "hello"); s.add_turn("assistant", "hi there")
+    c = TestClient(create_app(PersonaConfig(), EchoBackend(), s))
+    assert c.delete("/api/turns").json() == {"cleared": True, "archived_turns": 2}
+    assert s.recent_turns() == [] and len(s.archived_turns()) == 2
 
 
 def test_turn_window_moves_in_steps(store):
@@ -129,7 +144,24 @@ def test_turn_window_moves_in_steps(store):
         store.add_turn("user", f"m{i}")
         starts.append(store.turns_window()[0]["content"])
     assert len(set(starts)) <= 2          # the start only moves every 16 turns
-    assert store.turns_window()[-1]["content"] == "m46" and 20 <= len(store.turns_window()) < 36
+    assert store.turns_window()[-1]["content"] == "m46" and 8 <= len(store.turns_window()) < 24
+
+
+def test_window_only_grows_between_resets_and_keeps_what_was_sent(store):
+    prev = None
+    resets = 0
+    for i in range(59):
+        store.add_turn("user", f"m{i}", sent=f"[notes {i}]\n\nm{i}")
+        store.add_turn("assistant", f"r{i}")
+        w = store.turns_window(as_sent=True)
+        if prev and w[:len(prev)] != prev:
+            resets += 1
+            assert len(w) == 8                # starts again from the last 8
+        prev = w
+    assert resets == 6 and len(prev) < 24   # a reset every 16 turns; otherwise each prompt extends the last
+    assert prev[-2]["content"] == "[notes 58]\n\nm58" and store.turns_window()[-2]["content"] == "m58"
+    assert all("notes" not in t["content"] for t in prev[:8])   # carried over at the reset: plain (shorter re-read)
+    assert store.recent_turns(1) == [{"role": "assistant", "content": "r58"}] and "notes" not in store.archived_turns()[0]["content"]
 
 
 def test_only_out_of_view_turns_are_summarized_in_chunks(store):
@@ -357,7 +389,7 @@ class FakeEmbedder(Embedder):
         return out
 
 
-def test_vectors_made_once_remade_after_edit_and_removed_on_forget(store):
+def test_vectors_made_once_remade_after_edit_and_hidden_on_forget(store):
     e = FakeEmbedder()
     a = store.save(Memory(content="The owner has two dogs, Max and Ruby."))
     store.save(Memory(content="Sam loves her mom's apple pie."))
@@ -366,8 +398,13 @@ def test_vectors_made_once_remade_after_edit_and_removed_on_forget(store):
     store.correct(a.id, "The owner has two dogs, Max and Ruby, and a cat.")
     assert [m.id for m in store.needs_vectors(e.model)] == [a.id] and e.index(store) == 1
     assert store.needs_vectors("another-model")                         # model changed → all remade
-    store.forget(a.id)
-    assert store.db.execute("SELECT COUNT(*) FROM vectors WHERE memory_id=?", (a.id,)).fetchone()[0] == 0
+    q = e._embed(["cats"])[0]
+    assert a.id in [m.id for m, _ in store.by_meaning(q, e.model, limit=5)]
+    store.forget(a.id)                                                  # hidden: kept, but never found
+    assert a.id not in [m.id for m, _ in store.by_meaning(q, e.model, limit=5)]
+    assert not any(m.id == a.id for m in store.needs_vectors(e.model))
+    store.restore_hidden(a.id)                                          # back: found again, no re-embedding needed
+    assert a.id in [m.id for m, _ in store.by_meaning(q, e.model, limit=5)]
 
 
 def test_by_meaning_finds_without_shared_words(store):
@@ -402,7 +439,9 @@ def test_prompt_gets_notes_found_by_meaning(tmp_path):
             async for p in EchoBackend.chat_stream(self, messages):
                 yield p
     b.__class__ = Stream
-    old = srv.MEANING_MIN; srv.MEANING_MIN = 0.3
+    import memory.retrieve as rt
+    old = rt.MEANING_MIN, rt.MEANING_WITH_NAME, rt.STANDOUT_Z
+    rt.MEANING_MIN, rt.MEANING_WITH_NAME, rt.STANDOUT_Z = 0.3, 0.3, -99   # the fake embedder's scale
     try:
         with TestClient(create_app(PersonaConfig(memory_db=str(tmp_path / "m.sqlite")), b, store, embedder=e)).websocket_connect("/ws") as ws:
             ws.receive_json()
@@ -410,5 +449,113 @@ def test_prompt_gets_notes_found_by_meaning(tmp_path):
             while ws.receive_json().get("state") != "idle":
                 pass
     finally:
-        srv.MEANING_MIN = old
+        rt.MEANING_MIN, rt.MEANING_WITH_NAME, rt.STANDOUT_Z = old
     assert "apple pie" in b.seen[0][-1]["content"] and "apple pie" not in b.seen[0][0]["content"]
+
+
+# ---- Phase 0: never lose a memory (docs/MEMORY_ARCHITECTURE.md; the owner 2026-10-31: forget = hide, clear = archive) ----
+def test_forget_hides_and_restore_brings_back(store):
+    m = store.save(Memory(content="the owner's brother Tom lives in Ohio."))
+    assert store.forget(m.id, reason="test")
+    assert store.get(m.id) is None and m.id not in [x.id for x in store.all()]
+    assert not store.search("Tom Ohio") and not store.facts()
+    assert [h.id for h in store.hidden()] == [m.id] and store.hidden()[0].content == m.content   # kept word for word
+    assert not store.forget(m.id)                                       # already hidden
+    back = store.restore_hidden(m.id)
+    assert back and back.content == m.content and store.search("Tom Ohio")[0].id == m.id
+    assert store.restore_hidden(m.id) is None                           # not hidden any more
+    assert [v["action"] for v in store.history(m.id)] == ["create", "hide", "restore"]
+
+
+def test_edits_and_corrections_keep_history(store):
+    m = store.save(Memory(content="Sam works at the clinic.", status="inferred", confidence=0.6, source="auto:x"))
+    store.update(m.id, kind="fact", people="the loved one")
+    store.correct(m.id, "Sam works at the hospital.")
+    h = store.history(m.id)
+    assert [v["action"] for v in h] == ["create", "edit", "correct"]
+    assert h[-1]["before"]["content"] == "Sam works at the clinic."   # the old wording is never lost
+    assert h[-1]["after"]["content"] == "Sam works at the hospital." and h[-1]["after"]["status"] == "confirmed"
+    assert h[1]["after"]["people"] == "the loved one" and h[0]["by"] == "auto:x"
+
+
+def test_repeat_that_upgrades_is_logged_as_merge(store):
+    m = store.save(Memory(content="the owner likes fishing at the lake.", status="inferred", confidence=0.6))
+    _, dup = store.add(Memory(content="the owner likes fishing at the lake.", status="confirmed", source="owner:chat"))
+    assert dup and [v["action"] for v in store.history(m.id)] == ["create", "merge"]
+    assert store.history(m.id)[1]["before"]["status"] == "inferred"
+
+
+def test_conflict_keep_one_hides_the_other(store):
+    a = store.save(Memory(content="the owner was born in 1955."))
+    b = store.save(Memory(content="the owner was born in 1957."))
+    store.flag_conflict(a.id, b.id, 0.9, "different year")
+    cid = store.open_conflicts()[0]["id"]
+    assert store.resolve_conflict(cid, "keep_a")
+    assert store.get(b.id) is None and [h.id for h in store.hidden()] == [b.id] and not store.open_conflicts()
+    assert "conflict" in store.history(b.id)[-1]["reason"]
+
+
+def test_clear_conversation_archives_every_turn(store):
+    for i in range(30):
+        store.add_turn("user" if i % 2 == 0 else "assistant", f"turn {i}")
+    assert store.clear_turns() > 0
+    assert store.recent_turns() == [] and store.turns_window() == [] and store.turns_to_summarize(20) == []
+    store.add_turn("user", "fresh start")
+    assert [t["content"] for t in store.recent_turns()] == ["fresh start"]
+    arch = store.archived_turns()
+    assert len(arch) == 31 and arch[0]["content"] == "turn 0" and arch[-1]["content"] == "fresh start"
+
+
+def test_old_database_gets_hidden_column_after_a_backup(tmp_path):
+    import sqlite3 as sq
+    p = tmp_path / "old.sqlite"
+    s = MemoryStore(p); s.save(Memory(content="Something from before.")); s.close()
+    db = sq.connect(p); db.execute("ALTER TABLE memories DROP COLUMN hidden"); db.execute("DELETE FROM meta"); db.commit(); db.close()
+    s = MemoryStore(p)
+    assert s.all()[0].content == "Something from before." and s.get_meta("schema_version") == "7"
+    assert list(tmp_path.glob("old-before-v3-*.sqlite"))
+
+
+def test_backup_restore_round_trip_loses_nothing(store, tmp_path):
+    m = store.save(Memory(content="Echo's name was Max until October 2026."))
+    store.correct(m.id, "Echo was called Max until October 30, 2026.")
+    h = store.save(Memory(content="Something to forget.")); store.forget(h.id)
+    for i in range(5):
+        store.add_turn("user", f"hello {i}")
+    store.clear_turns()
+    assert store.check() == "ok"
+    bk = store.backup(tmp_path / "b" / "snap.sqlite")
+    target = tmp_path / "restored.sqlite"
+    MemoryStore.restore(bk, target)
+    r = MemoryStore(target)
+    assert [x.content for x in r.all()] == [x.content for x in store.all()]
+    assert [x.content for x in r.hidden()] == ["Something to forget."]
+    assert len(r.history(m.id)) == 2 and len(r.archived_turns()) == 5 and r.recent_turns() == []
+
+
+def test_damaged_backup_is_refused(store, tmp_path):
+    import sqlite3 as sq
+    import pytest
+    bad = tmp_path / "bad.sqlite"
+    bad.write_bytes(b"SQLite format 3\x00" + b"\x00" * 200)
+    target = tmp_path / "live.sqlite"
+    store.backup(target)
+    before = target.read_bytes()
+    with pytest.raises(sq.DatabaseError):
+        MemoryStore.restore(bad, target)
+    assert target.read_bytes() == before                                # the good database was not touched
+
+
+
+def test_coming_back_after_a_quiet_spell_starts_a_short_window(store):
+    for i in range(10):
+        store.add_turn("user", f"m{i}", sent=f"[notes {i}] m{i}")
+        store.add_turn("assistant", f"r{i}")
+    w = store.turns_window(as_sent=True)
+    assert len(w) == 20 and w[-2]["content"] == "[notes 9] m9"
+    later = time.time() + 2 * 3600                                      # two hours later
+    w2 = store.turns_window(as_sent=True, now=later)
+    assert len(w2) == 8 and all("notes" not in t["content"] for t in w2)
+    store.add_turn("user", "back again", sent="[notes] back again"); store.add_turn("assistant", "hello")
+    w3 = store.turns_window(as_sent=True)
+    assert w3[:8] == w2 and w3[-2]["content"] == "[notes] back again"   # grows from there, prefix unchanged

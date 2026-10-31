@@ -33,14 +33,15 @@
     <h2>Voices Echo knows</h2>
     <div id="people" class="hint">Loading…</div>
     <p class="hint">Echo compares each spoken sentence with these voices, on this Mac only. If no voice matches clearly,
-      it treats the speaker as unknown and asks when it matters. The owner's voice is learned from their own recordings.</p>
+      it treats the speaker as unknown and asks when it matters. Each person should read here too, on this microphone:
+      a voice sounds different through each mic, so learning everyone on the same one keeps them apart.</p>
   </div>
 
   <div class="card">
     <h2>Teach Echo a voice</h2>
     <div class="row"><span>Whose voice?</span>
-      <select id="who"><option value="loved_one">My loved one</option></select></div>
-    <p><label><input type="checkbox" id="consent"> <span id="consentText">I'm the person reading below, and I agree that Echo keeps short recordings of my
+      <select id="who"><option value="loved_one">My loved one</option><option value="owner">Me (the owner)</option></select></div>
+    <p><label><input type="checkbox" id="consent"> <span id="consentText">I'm the person reading below (<span id="whoName">My loved one</span>), and I agree that Echo keeps short recordings of my
       voice and a voice print on this Mac so it can recognise me. I can ask for them to be deleted at any time.</span></label></p>
     <p class="hint">Read each sentence in your normal voice, about an arm's length from the microphone. 6 sentences, about a minute in all.</p>
     <div class="say" id="say"></div>
@@ -82,6 +83,8 @@ async function load() {
   }
 }
 function show() { $('say').textContent = step < LINES.length ? `${step + 1} of ${LINES.length}: “${LINES[step]}”` : 'All done. Thank you!'; }
+$('who').onchange = () => { $('whoName').textContent = $('who').selectedOptions[0].text; $('consent').checked = false;
+  step = 0; $('msg').textContent = ''; $('recBtn').disabled = true; show(); };
 $('consent').onchange = () => { $('recBtn').disabled = !$('consent').checked || step >= LINES.length; };
 
 async function record() {

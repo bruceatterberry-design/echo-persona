@@ -1,6 +1,6 @@
 [project]
 name = "echo-persona"
-version = "0.1.0"
+version = "0.4.0a0"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi==0.115.6",
@@ -11,7 +11,11 @@ dependencies = [
   "mlx-whisper==0.4.2",
   "pillow==11.1.0",
   "python-multipart==0.0.20",
-  "sherpa-onnx==2.0.1",
+  "sherpa-onnx>=2.0.1",
+  "faiss-cpu>=1.15.1",
+  "yt-dlp>=2026.10.26",
+  "librosa>=1.0.0",
+  "playwright>=1.64.1",
 ]
 
 [dependency-groups]

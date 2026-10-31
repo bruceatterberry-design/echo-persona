@@ -33,6 +33,15 @@
   .m.you { align-self: flex-end; background: #13202a; }
   .m.err { border-color: var(--err); color: var(--err); }
   .meta { font-size: 11px; color: var(--dim); margin-top: 4px; }
+  .trainhint { position: absolute; bottom: 80px; left: 12px; max-width: calc(50% - 135px); font-size: 11px; line-height: 1.35; color: var(--dim); text-align: left; }
+  .trainhint b { color: var(--speak); font-weight: 600; }
+  .m.tested { border: 2px solid var(--speak); }
+  .votes { margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+  .votes button, .choices button { font-size: 15px; padding: 4px 12px; border-radius: 8px; cursor: pointer; }
+  .votes input { flex: 1; min-width: 160px; padding: 4px 8px; }
+  .choices { display: flex; gap: 8px; flex-wrap: wrap; align-self: flex-start; }
+  .src { font-size: 12px; margin-top: 6px; color: var(--dim); }
+  .src a { color: var(--speak); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   form { display: flex; gap: 10px; padding: 16px 22px; border-top: 1px solid var(--line); }
   input[type=text] { flex: 1; background: var(--panel); border: 1px solid var(--line); color: var(--text); border-radius: 10px; padding: 12px 14px; font: inherit; }
   input[type=text]:focus { outline: 1px solid var(--accent); }
@@ -63,6 +72,7 @@
   <div id="health">checking…</div>
   <canvas id="face" width="720" height="720" aria-hidden="true"></canvas>
   <div id="meter" title="Microphone level (line = trigger level)" style="position:absolute;bottom:62px;left:50%;transform:translateX(-50%);width:180px;height:6px;border:1px solid var(--line);border-radius:3px;display:none;overflow:hidden"><div id="meterBar" style="height:100%;width:0;background:var(--accent)"></div><div id="meterThr" style="position:absolute;top:0;bottom:0;width:2px;background:var(--think)"></div></div>
+  <div id="trainHint" class="trainhint" aria-live="polite"></div>
   <label id="debugWrap" style="position:absolute;bottom:80px;left:50%;transform:translateX(-50%);display:none"><input type="checkbox" id="debugHear"> Show what I hear (testing)</label>
   <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span></div>
 </section>
@@ -75,6 +85,7 @@
   <header><h2>WHAT I REMEMBER</h2><button id="memClose" aria-label="Close">×</button></header>
   <div class="hint">Only things you save are kept. Type "remember that …" in chat, or add one below. Edit text and press Save to correct it.</div>
   <div id="memList"></div>
+  <details id="hiddenBox"><summary class="hint">Forgotten (<span id="hiddenN">0</span>), kept so they can be brought back</summary><div id="hiddenList"></div></details>
   <div class="tools"><input id="memNew" placeholder="Add something to remember…" aria-label="New memory"><button id="memAdd">Add</button></div>
   <div class="tools"><button id="memExport">Export</button><button id="memBackup">Back up</button><button id="clearConv" class="del">Clear conversation</button></div>
 </aside>
@@ -291,6 +302,54 @@ function add(text, cls, meta) {
   if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
   $('log').appendChild(d); $('log').scrollTop = 1e9;
 }
+let pendingSources = null;
+function trainingHint(m) {   // small reminder left of "Show what I hear", below the face (core/trainer.py)
+  const h = $('trainHint'); h.textContent = '';
+  const b = t => { const x = document.createElement('b'); x.textContent = t; return x; };
+  if (m.busy) h.append('Training with Claude… say ', b('"skip"'), ' or ', b('"stop training"'), ' anytime.');
+  else if (m.testing) h.append(`Testing is on: 👎 wrong replies${m.wrong ? ` (${m.wrong} marked)` : ''}, then say `,
+                               b('"Train Echo"'), '. ', b('"Stop testing"'), ' to end.');
+  else h.append('To improve my answers, say ', b('"use Claude to evaluate Echo"'), '.');
+}
+function sendText(q, extra) {   // as if typed (training buttons and replays use this too)
+  if (!q || !ws || ws.readyState !== 1) return;
+  stopSpeaking(); add(q, 'you' + (extra && extra.replay_of ? ' tested' : ''));
+  ws.send(JSON.stringify(Object.assign({ text: q }, extra || {}))); setState('thinking');
+}
+function addVotes(el, fid) {   // testing mode: 👍 / 👎 (+ what was wrong) under a reply (core/trainer.py)
+  if (!el || !fid) return;
+  el.classList.add('tested');
+  const row = document.createElement('div'); row.className = 'votes';
+  const up = document.createElement('button'), down = document.createElement('button');
+  up.textContent = '👍'; up.title = 'This reply is right'; down.textContent = '👎'; down.title = 'This reply is wrong';
+  const done = msg => { row.textContent = msg; };
+  up.onclick = () => { ws.send(JSON.stringify({ type: 'feedback', fid, vote: 'up' })); done('👍 Thanks.'); };
+  down.onclick = () => {
+    row.textContent = '';
+    const note = document.createElement('input'); note.placeholder = 'What was wrong? (optional)'; note.maxLength = 1000;
+    const send = document.createElement('button'); send.textContent = 'Send 👎';
+    const go = () => { ws.send(JSON.stringify({ type: 'feedback', fid, vote: 'down', note: note.value.trim() })); done('👎 Logged for training.'); };
+    send.onclick = go; note.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
+    row.append(note, send); note.focus();
+  };
+  row.append(up, down); el.appendChild(row); $('log').scrollTop = 1e9;
+}
+function addChoices(options) {
+  const box = document.createElement('div'); box.className = 'choices';
+  options.forEach(o => { const b = document.createElement('button'); b.textContent = o;
+    b.onclick = () => { box.querySelectorAll('button').forEach(x => x.disabled = true); sendText(o); }; box.appendChild(b); });
+  $('log').appendChild(box); $('log').scrollTop = 1e9;
+}
+function showSources(el, list) {   // titles as plain text; only http(s) links are clickable
+  if (!el || !list || !list.length) return;
+  const box = document.createElement('div'); box.className = 'src'; box.textContent = 'Sources:';
+  list.forEach((s, i) => {
+    const a = document.createElement('a'); a.textContent = `${i + 1}. ${s.title || s.url}`; a.title = s.url;
+    if (/^https?:\/\//i.test(s.url)) { a.href = s.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+    box.appendChild(a);
+  });
+  el.appendChild(box); $('log').scrollTop = 1e9;
+}
 const OWN = '__own__';
 let speakGen = 0, ownSpeaking = false, ownAudio = null;
 const ttsCache = new Map();   // short phrases like "Yes?" are reused instantly
@@ -502,11 +561,26 @@ function connect() {
       if (!(live && useOwn() && V.failed !== true)) { S.expr = m.expression; S.intensity = m.intensity; }
       if (live) { live.textContent = m.text; const t = document.createElement('div'); t.className = 'meta'; t.textContent = m.expression; live.appendChild(t); }
       else add(m.text, '', m.expression);
+      if (pendingSources) { showSources(live || $('log').lastElementChild, pendingSources); pendingSources = null; }
+      if (m.fid) addVotes(live || $('log').lastElementChild, m.fid);
       if (live && useOwn() && V.failed !== true) {
         if (V.failed === 'pending-system') { V.failed = true; speakSystem(V.full); } else voiceFeed('', true);
       } else speak(m.text);
       live = null;
     }
+    if (m.type === 'sources') { pendingSources = m.sources; }
+    if (m.type === 'music') startMusic(m.url, m.vid);
+    if (m.type === 'music_stop') endMusic(false);
+    if (m.type === 'choices') { addChoices(m.options || []); }
+    if (m.type === 'history' && m.training) trainingHint(m.training);
+    if (m.type === 'training') trainingHint(m);
+
+    if (m.type === 'replay') {   // once I've finished saying "here it is again", send the owner's words again
+      const t0 = Date.now();
+      const wait = () => (S.state === 'speaking' || ownSpeaking) && Date.now() - t0 < 30000 ? setTimeout(wait, 300)
+                                                                   : sendText(m.text, { replay_of: m.entry });
+      setTimeout(wait, 1200);
+    }   // pages Echo read for this answer (core/tools.py)
     if (m.type === 'error') { add(m.message, 'err'); }
     if (m.type === 'stand_down') { standDown(); return; }
     if (m.type === 'history') { $('log').innerHTML = ''; m.turns.forEach(t => add(t.content, t.role === 'user' ? 'you' : '')); }
@@ -517,7 +591,7 @@ connect();
 $('f').onsubmit = e => {
   e.preventDefault(); const q = $('q').value.trim(); if (!q || ws.readyState !== 1) return;
   stopSpeaking(); // barge-in: typing interrupts speech
-  add(q, 'you'); ws.send(JSON.stringify({ text: q })); $('q').value = '';
+  $('q').value = ''; sendText(q);
 };
 async function health() {
   try { const h = await (await fetch('/health')).json();
@@ -554,9 +628,19 @@ async function loadMem() {
     const save = document.createElement('button'); save.textContent = 'Save';
     save.onclick = async () => { await api('memory/' + it.id, { method: 'PATCH', body: JSON.stringify({ content: ta.value }) }); loadMem(); };
     const del = document.createElement('button'); del.textContent = 'Forget'; del.className = 'del';
-    del.onclick = async () => { if (confirm('Forget this permanently?\n\n' + it.content)) { await api('memory/' + it.id, { method: 'DELETE' }); loadMem(); } };
+    del.onclick = async () => { if (confirm('Forget this? I stop using it, but it is kept under "Forgotten" and can be brought back.\n\n' + it.content)) { await api('memory/' + it.id, { method: 'DELETE' }); loadMem(); } };
     const btns = document.createElement('span'); btns.append(save, ' ', del);
     row.append(info, btns); d.append(ta, row); L.appendChild(d);
+  }
+  const hid = await (await api('memory/hidden')).json(), H = $('hiddenList'); H.innerHTML = ''; $('hiddenN').textContent = hid.length;
+  for (const it of hid) {
+    const d = document.createElement('div'); d.className = 'mi';
+    const p = document.createElement('p'); p.textContent = it.content;
+    const row = document.createElement('div'); row.className = 'row';
+    const info = document.createElement('span'); info.textContent = `forgotten ${new Date(it.hidden*1000).toLocaleDateString()}`;
+    const back = document.createElement('button'); back.textContent = 'Bring back';
+    back.onclick = async () => { await api('memory/' + it.id + '/restore', { method: 'POST' }); loadMem(); };
+    row.append(info, back); d.append(p, row); H.appendChild(d);
   }
 }
 $('memBtn').onclick = () => { $('mem').classList.add('open'); loadMem(); };
@@ -566,7 +650,7 @@ $('memAdd').onclick = async () => { const v = $('memNew').value.trim(); if (!v) 
 $('memExport').onclick = async () => { const t = await (await api('memory/export')).text();
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: 'application/json' })); a.download = 'echo-memories.json'; a.click(); };
 $('memBackup').onclick = async () => { const r = await (await api('memory/backup', { method: 'POST' })).json(); alert('Backup saved:\n' + r.backup); };
-$('clearConv').onclick = async () => { if (confirm('Clear the conversation history? Saved memories are kept.')) { await api('turns', { method: 'DELETE' }); $('log').innerHTML = ''; } };
+$('clearConv').onclick = async () => { if (confirm('Clear the conversation from my screen? I start fresh, but every word is kept in my archive. Saved memories are kept.')) { await api('turns', { method: 'DELETE' }); $('log').innerHTML = ''; } };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('mem').classList.remove('open'); });
 $('q').focus();
 
@@ -739,6 +823,30 @@ $('listen').onchange = async () => {
   if (!(await openMic())) { $('listen').value = 'ptt'; return; }
   setMicIndicator();
 };
+// Music (the owner, 2026-10-31): a song Echo plays opens in a small window he controls. The mic is off while it plays
+// (Echo hears the song from YouTube itself, not through the mic) and comes back in its previous mode when that window
+// closes: when the song ends Echo closes it; if the owner closes it early, Echo notices within a second.
+let music = null;   // {win, vid, before, poll}
+function startMusic(url, vid) {
+  if (music) endMusic(false, true);
+  const w = window.open(url, 'echo-music', 'popup,width=960,height=600');
+  if (!w) { ws.send(JSON.stringify({ type: 'music_failed', url, vid })); return; }   // blocked: Echo opens Chrome instead
+  const before = mode();
+  if (recording) { recording = false; recBuf = []; }
+  convo = false;
+  if (before !== 'ptt') { $('listen').value = 'ptt'; closeMic(); }
+  music = { win: w, vid, before, poll: setInterval(() => { if (music && music.win.closed) endMusic(true); }, 1000) };
+  add('🎵 The mic is off while the music plays. It comes back when the music window closes.', 'note');
+}
+function endMusic(byUser, quiet) {
+  if (!music) return;
+  const m = music; music = null; clearInterval(m.poll);
+  try { if (!m.win.closed) m.win.close(); } catch {}
+  if (m.before !== 'ptt') { $('listen').value = m.before; $('listen').onchange(); }
+  if (!quiet) add('🎙 The mic is back on.', 'note');
+  if (byUser) ws.send(JSON.stringify({ type: 'music_closed', vid: m.vid }));
+}
+window.addEventListener('beforeunload', () => { try { music && music.win.close(); } catch {} });
 // Only one Echo window may use the microphone: a newer one (any browser) tells older ones to stand down.
 function standDown() {
   if (recording) { recording = false; recBuf = []; }

@@ -5,6 +5,7 @@
 dataset_root: "/Volumes/External storage/EchoPersona-Data"
 
 # The person Echo mostly talks with. Echo then uses their name only now and then, like people do. Blank = no filtering.
+owner_name: ""        # your first name: say "This is <name>" so Echo learns your voice in the room
 loved_one_name: ""
 
 personality_file: "config/personality.yaml"   # copy config/personality.example.yaml there and fill it in

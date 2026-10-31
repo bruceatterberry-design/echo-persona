@@ -9,8 +9,11 @@ import re
 
 GREETING = r"(?:hey|hay|hei|hi|okay|ok)"
 WEAK_GREETING = r"(?:a|ay|uh|eh)"  # Whisper's mishearings of "hey": only trusted at the start
-NAME = r"(?:echo|echoes|eko|ecco|ekko|ecko|eco|eggo)"
-WAKE_RE = re.compile(rf"(?:\b{GREETING}|^{WEAK_GREETING})[\s,]+{NAME}\b")
+NAME = r"(?:echo|echoes|eko|ecco|ekko|ekho|echoe|ecko|eco|eggo|nako|neko|necko|nekko|naco)"
+# "Hey Echo" said on its own is often heard as "Hey Nako" (the n from "hey"+"echo" running together),
+# and sometimes as one word ("Hecho"/"Heko"); a TTS voice can come out "Fay Echo".
+FUSED = r"(?:hecho|heko|hekko|hecko|fay echo)"
+WAKE_RE = re.compile(rf"(?:(?:\b{GREETING}|^{WEAK_GREETING})[\s,]+{NAME}|^{FUSED})\b")
 
 
 def normalize(text: str) -> str:
@@ -37,7 +40,7 @@ def detect_wake(text: str) -> tuple[bool, str]:
 
 END_PHRASE = (r"(?:that'?s all|that is all|that'?ll be all|good ?bye|bye(?: bye)?|stop listening|go to sleep|"
               r"we'?re done|i'?m done|end (?:the )?conversation|never ?mind)")
-END_TAIL = r"(?:\s+(?:for now|now|for today|then|thanks|thank you|echo|okay|ok))*"
+END_TAIL = r"(?:\s+(?:for now|now|for today|then|thanks|thank you|echo|ecco|eco|okay|ok))*"
 # The ending phrase must come at the end of what was said, so "my goodbye party" doesn't end a conversation.
 END_RE = re.compile(rf"\b{END_PHRASE}{END_TAIL}$")
 

@@ -44,6 +44,21 @@ class Curiosity:
         p = self.state().get("pending")
         return p if p and (now or time.time()) - p["at"] < ANSWER_WINDOW_S else None
 
+    def scrub(self, reply: str) -> str:
+        """My old reply without the life question I ended it with: the model copied that habit onto unrelated replies
+        ("Tell me any memory you'd like me to keep…" after a YouTube request). Only what the model sees changes."""
+        parts = re.split(r"(?<=[.?!])\s+", reply.strip())
+        drop = {i for i, p in enumerate(parts) if any(asked_in(p, q) for q in self.questions)}
+        for i in range(len(parts) - 1):   # questions written as two sentences ("Tell me any memory… Start with when…")
+            if i in drop or i + 1 in drop:
+                continue
+            for q in self.questions:
+                if asked_in(parts[i] + " " + parts[i + 1], q) and _shares(parts[i], q) and _shares(parts[i + 1], q):
+                    drop |= {i, i + 1}
+                    break
+        keep = [p for i, p in enumerate(parts) if i not in drop]
+        return " ".join(keep) if keep else reply
+
     # ---- choosing ----
     def next_question(self) -> dict | None:
         st = self.state()
@@ -116,6 +131,14 @@ def hint(q: dict) -> str:
 
 STOP_WORDS = set("what was your you the and did tell about how who where when a an of to in it me is are were do "
                  "that this with for on at from".split())
+
+
+def _shares(sentence: str, q: dict) -> bool:
+    """At least 2 of the question's meaningful words, or half of this sentence's: it's part of the question."""
+    want = {w for w in re.findall(r"[a-z']+", q["text"].lower()) if w not in STOP_WORDS and len(w) > 2}
+    own = {w for w in re.findall(r"[a-z']+", sentence.lower()) if w not in STOP_WORDS and len(w) > 2}
+    hit = len(want & own)
+    return hit >= 2 or (own and hit / len(own) >= 0.5)
 
 
 def asked_in(reply: str, q: dict) -> bool:

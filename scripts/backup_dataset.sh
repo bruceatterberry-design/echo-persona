@@ -20,7 +20,11 @@ for m in root.glob("raw/phone/*/manifest.json"):   # phone sessions (Echo Person
         f = m.parent / t["file"]
         if hashlib.sha256(f.read_bytes()).hexdigest() == t["sha256"]: ok += 1
         else: bad += 1; print("MISMATCH", f)
-print(f"backup verified: {ok} recordings OK (studio + phone), {bad} mismatched")
+for side in root.glob("raw/conversations/*/*.jsonl.xz.sha256"):   # archived conversation days (memory/archive.py)
+    digest, name = side.read_text().split()
+    if hashlib.sha256((side.parent / name).read_bytes()).hexdigest() == digest: ok += 1
+    else: bad += 1; print("MISMATCH", side.parent / name)
+print(f"backup verified: {ok} originals OK (studio + phone + conversation days), {bad} mismatched")
 import time
 (root / ".verified.json").write_text(json.dumps({"at": time.time(), "ok": ok, "mismatched": bad}))   # shown on the status page
 raise SystemExit(1 if bad else 0)

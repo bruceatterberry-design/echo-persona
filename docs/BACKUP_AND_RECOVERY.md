@@ -18,6 +18,9 @@ Time Machine **excludes the external SSD**, which is why copy 2 exists. **Run `b
 session or phone copy.** It prints e.g. `backup verified: 172 recordings OK (studio + phone), 0 mismatched`.
 
 Extra memory snapshot at any time: Echo window → What I remember → **Back up** (writes `data/backups/memory-<date>.sqlite`).
+Every snapshot is checked with SQLite's `integrity_check`; a restore refuses a damaged backup and checks the result.
+Nothing in the memory database is deleted in normal use: "Forget" hides a memory (bring it back under **Forgotten**),
+"Clear conversation" only clears Echo's view (the turns stay), and every edit is kept in the `versions` table.
 
 **Off-site copy (recommended):** plug in a spare drive and run
 ```
@@ -38,7 +41,25 @@ rsync -a ~/EchoPersona/data/dataset-backup/ "/Volumes/External storage/EchoPerso
 ```
 Restart Echo (log out and in, or `launchctl kickstart -k gui/$(id -u)/com.echopersona.voice` and `…core`).
 
-**Memories got damaged or deleted:** stop Echo Persona Core, restore a snapshot, start it again:
+**Nightly memory snapshots (since 2026-10-31):** after the nightly upkeep Echo writes
+`data/backups/memory-daily-YYYYMMDD.sqlite.gz` (integrity-checked, gzip, with a `.sha256`), keeping the newest 14 daily,
+one per month for 12 months (`memory-monthly-…`) and one per year (`memory-yearly-…`). Once a week it restores the newest
+onto a scratch copy and checks it (a "restore drill"; Status page → Backups). Run either by hand:
+`PYTHONPATH=. uv run python -m memory.backup snapshot` / `… drill`.
+Measured: Echo today 0.4 MB, drill 0.03 s; a 1-million-memory database 0.95 GB → 0.27 GB, snapshot 26 s, restore 15 s.
+
+**Memories got damaged or deleted (snapshot + replay, preferred):** stop Echo, restore the newest good snapshot; every
+conversation turn said after it is replayed from the read-only day archives on the SSD:
+```
+launchctl bootout gui/$(id -u)/com.echopersona.core
+cd ~/EchoPersona && PYTHONPATH=. uv run python -c "from pathlib import Path; from memory import backup as b; \
+  print(b.restore(b.snapshots(Path('data/backups'))[0], Path('data/memory.sqlite'), Path('/Volumes/External storage/EchoPersona-Data')))"
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.echopersona.core.plist
+```
+A damaged snapshot (checksum mismatch) is refused and the database is left as it was; then use the next one
+(`b.snapshots(...)[1]`). Meaning vectors and the search index rebuild by themselves.
+
+**Older way, from a plain `.sqlite` copy:** stop Echo Core, restore a snapshot, start it again:
 ```
 launchctl bootout gui/$(id -u)/com.echopersona.core
 cd ~/EchoPersona && PYTHONPATH=. uv run python -c "from memory.store import MemoryStore as M; M.restore('data/backups/memory-YYYYMMDD-HHMMSS.sqlite', 'data/memory.sqlite')"

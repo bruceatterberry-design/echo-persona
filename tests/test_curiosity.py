@@ -147,3 +147,13 @@ def test_asked_in_rejects_a_different_question_sharing_one_word():
     from memory.curiosity import asked_in
     q = {"text": "What was your first car, and where did you go in it?"}
     assert not asked_in("What was it like when you first started dating Sam?", q)
+
+
+def test_old_questions_hidden_from_the_model(tmp_path):
+    from memory.curiosity import Curiosity
+    from memory.store import MemoryStore
+    c = Curiosity(MemoryStore(tmp_path / "m.sqlite"))
+    r = ("Sure thing. I'm opening YouTube now. Tell me any memory you'd like me to keep. "
+         "Start with when it was and who was there.")
+    assert c.scrub(r) == "Sure thing. I'm opening YouTube now."
+    assert c.scrub("We went to the lake in June. Sam was there.") == "We went to the lake in June. Sam was there."

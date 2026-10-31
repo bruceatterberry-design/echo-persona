@@ -19,6 +19,8 @@ from pathlib import Path
 
 import httpx
 
+from core.llm import chat_post
+
 CATEGORIES = ["communication", "explaining", "values", "interests", "humor", "empathy", "disagreement", "storytelling"]
 TRAIT_SCHEMA = {
     "type": "object",
@@ -114,7 +116,7 @@ def ask_llm(host: str, model: str, ex: dict, helper=None) -> dict:
     prompt = PROMPT.format(question=q, cats=", ".join(CATEGORIES), text=ex["text"][:6000])
     if helper and isinstance(got := helper.ask("personality", prompt, TRAIT_SCHEMA), dict):
         return got   # the owner's Claude account, if they switched it on; the same grounding checks apply below
-    r = httpx.post(f"{host}/api/chat", timeout=180, json={
+    r = chat_post(host, timeout=180, body={"think": False,   # background job: no thinking (slow)
         "model": model, "stream": False, "format": TRAIT_SCHEMA, "options": {"temperature": 0.2}, "keep_alive": "24h",
         "messages": [{"role": "user", "content": prompt}]})
     r.raise_for_status()
@@ -303,7 +305,8 @@ def _condense_group(host: str, model: str, cat: str, items: dict, most: int, hel
               "Every id should be used.")
     got = helper.ask("condense", prompt, CONDENSE_SCHEMA) if helper else None
     if not isinstance(got, dict):
-        r = httpx.post(f"{host}/api/chat", timeout=300, json={"model": model, "stream": False, "format": CONDENSE_SCHEMA,
+        r = chat_post(host, timeout=300, body={"think": False,   # background job: no thinking (slow)
+        "model": model, "stream": False, "format": CONDENSE_SCHEMA,
                        "options": {"temperature": 0.2}, "keep_alive": "24h", "messages": [{"role": "user", "content": prompt}]})
         r.raise_for_status()
         got = json.loads(r.json()["message"]["content"])

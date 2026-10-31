@@ -19,6 +19,10 @@ from tests.test_voice import synthetic_wav
     ("Hey Echo.", ""),
     ("Hi echo", ""),
     ("A echo, are you awake?", "are you awake?"),
+    ("Hey Nako.", ""),                      # how a bare "Hey Echo" is usually heard
+    ("Hey Neko, what time is it?", "what time is it?"),
+    ("Hecho.", ""),
+    ("Fay Echo.", ""),
 ])
 def test_wake_detected(text, command):
     assert detect_wake(text) == (True, command)
@@ -28,9 +32,14 @@ def test_wake_detected(text, command):
     "I was talking to my wife about dinner.",
     "There's an echo in this room.",
     "Thanks, echo, I'll be home soon.",   # name without a greeting: not a wake
+    "There's an echo in this room.",
     "Hey Steve, how are you?",
     "The canyon has a great echo.",
     "Echo chambers are a problem online.",
+    "Dicho y hecho.",                     # fused form only counts at the very start
+    "My cat Neko is asleep.",
+    "She's such a echo.",
+    "What a echo pie he is.",
     "",
 ])
 def test_not_woken(text):

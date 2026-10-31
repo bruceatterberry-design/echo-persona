@@ -83,3 +83,56 @@ def test_chat_opens_without_the_llm(tmp_path, monkeypatch):
         assert reply["type"] == "reply" and reply["text"] == "Opening The Weather Channel."
         assert ws.receive_json()["state"] == "idle"
     assert opened == ["https://weather.com/"]
+
+
+def test_play_on_youtube():
+    from core import browser
+    a = browser.parse_play("Hey Echo, open YouTube and play some Steely Dan.", None, [])
+    assert a.play == "steely dan" and a.url == "https://www.youtube.com/results?search_query=steely+dan"
+    assert browser.parse_play("play some music by the Eagles", None, []).play == "the eagles"
+    assert browser.parse_play("play Hotel California on YouTube", None, []).play == "hotel california"
+    assert browser.parse_play("play some Steely Dan", None, ["steely dan"]).play == "steely dan"    # listed artist
+    assert browser.parse_play("play some Steely Dan", None, []) is None                             # unknown: just talk
+    assert browser.parse_play("could you play some blues", None, ["blues"]).play == "blues"        # listed genre
+    for t in ("play a game with me", "open youtube", "can you play that again", "let's play cards"):
+        assert browser.parse_play(t, None, []) is None, t
+
+
+def test_play_uses_the_configured_account(monkeypatch):
+    from core import browser
+    monkeypatch.setattr(browser, "LOVED_ONE_ACCOUNT", "sam@example.com")
+    assert "authuser=sam@example.com" in browser.parse_play("play Clair de Lune on YouTube", "loved_one", []).url
+    assert "authuser" not in browser.parse_play("play Clair de Lune on YouTube", "owner", []).url
+
+
+def test_play_opens_top_video(monkeypatch):
+    from core import browser
+    opened = []
+    monkeypatch.setattr(browser, "youtube_top", lambda q: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(browser.subprocess, "run", lambda args, **k: opened.append(args[-1]))
+    assert browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
+    assert opened == ["https://www.youtube.com/watch?v=aQnW-MxAU6U"]
+    monkeypatch.setattr(browser, "youtube_top", lambda q: None)                    # lookup failed → search page
+    browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
+    assert "results?search_query=steely+dan" in opened[-1]
+
+
+def test_natural_music_requests():
+    from core import browser
+    A = ["steely dan", "dan fogelberg", "blues"]
+    for t, want in [("Would you open up a Steely Dan song and listen to it with me?", "steely dan"),
+                    ("can we listen to some blues", "blues"), ("let's hear some Dan Fogelberg", "dan fogelberg"),
+                    ("find me a Steely Dan song", "steely dan"), ("pull up Hotel California on YouTube", "hotel california")]:
+        a = browser.parse_play(t, None, A)
+        assert a and a.play == want, t
+    for t in ("do you like to listen to blues?", "open up about your day", "listen to me",
+              "what is your favourite Steely Dan song?", "can we listen to that again"):
+        assert browser.parse_play(t, None, A) is None, t
+
+
+def test_unrecognised_requests_are_flagged_but_talk_is_not():
+    from core import browser
+    assert browser.wants_action("open the spotify app and play jazz", [])
+    assert browser.wants_action("play the radio", [])
+    for t in ("open up about your day", "listen to me", "open the window", "I love you", "can we listen to that again"):
+        assert not browser.wants_action(t, []), t

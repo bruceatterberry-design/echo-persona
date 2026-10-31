@@ -86,6 +86,18 @@ def data(store, dataset_root: Path, pdir: Path) -> dict:
         out["face_frames"] = len(json.loads(atlas.read_text())["frames"]) if atlas.exists() else 0
     except Exception:
         pass
+    last = json.loads(store.get_meta("consolidation_last", "{}") or "{}")
+    problem = json.loads(store.get_meta("consolidation_problem", "") or "null")
+    out["upkeep"] = {"at": last.get("at"), "links": last.get("links"), "repeats": last.get("repeats"),
+                     "conflicts_flagged": last.get("conflicts_flagged"), "patterns": len(last.get("patterns", [])),
+                     "facts_said_more_than_once": last.get("facts_said_more_than_once"), "seconds": last.get("seconds"),
+                     "problems": (problem or {}).get("problems", [])}
+    try:
+        out["people_and_things"] = store.db.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        out["facts_found"] = store.db.execute("SELECT COUNT(*) FROM facts WHERE retired IS NULL").fetchone()[0]
+        out["conversations"] = store.db.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
+    except Exception:
+        pass
     prof = pdir / "profile.json"
     if prof.exists():
         p = json.loads(prof.read_text())
@@ -97,11 +109,15 @@ def data(store, dataset_root: Path, pdir: Path) -> dict:
 def backups(root: Path, dataset_root: Path) -> dict:
     v = root / "data/dataset-backup/.verified.json"
     ver = json.loads(v.read_text()) if v.exists() else {}
-    snaps = sorted((root / "data/backups").glob("memory-*.sqlite"), key=lambda p: p.stat().st_mtime)
+    snaps = sorted([*(root / "data/backups").glob("memory-*.sqlite"), *(root / "data/backups").glob("memory-*.sqlite.gz")],
+                   key=lambda p: p.stat().st_mtime)
+    dr = root / "data/backups/drill.json"
+    drill = json.loads(dr.read_text()) if dr.exists() else {}
     off = root / "data/offsite-backup.json"
     offsite = json.loads(off.read_text()) if off.exists() else {}
     return {"dataset_copy": _age(ver.get("at")) | {"recordings_ok": ver.get("ok"), "mismatched": ver.get("mismatched")},
             "memory_snapshot": _age(snaps[-1].stat().st_mtime if snaps else None),
+            "restore_drill": _age(drill.get("at")) | {"ok": drill.get("ok"), "seconds": drill.get("total_s")},
             "offsite": _age(offsite.get("at")) | {"where": offsite.get("where")}}
 
 
@@ -135,7 +151,14 @@ def report(store, stt, root: Path, dataset_root: Path, pdir: Path) -> dict:
         attention.append("The recordings backup is more than 2 weeks old: run scripts/backup_dataset.sh.")
     if b["dataset_copy"].get("mismatched"):
         attention.append("The last backup check found damaged copies: run scripts/backup_dataset.sh again.")
+    if b["restore_drill"].get("ok") is False:
+        attention.append("The last memory restore drill failed: see Backups (and docs/BACKUP_AND_RECOVERY.md).")
+    up = (d := data(store, dataset_root, pdir)).get("upkeep", {})
+    if up.get("problems"):
+        attention.append("Memory upkeep stopped to protect the memories: " + "; ".join(up["problems"]))
+    elif up.get("at") and time.time() - up["at"] > 3 * 86400:
+        attention.append("Memory upkeep hasn't run for 3 days.")
     if m["ssd_connected"] and m["ssd_encrypted"] is False:
         attention.append("The external SSD isn't encrypted (see SECURITY.md).")
     return {"generated": time.strftime("%Y-%m-%d %H:%M:%S"), "attention": attention, "services": sv, "mac": m,
-            "data": data(store, dataset_root, pdir), "backups": b, "speed": sp}
+            "data": d, "backups": b, "speed": sp}

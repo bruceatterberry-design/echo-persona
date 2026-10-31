@@ -1,0 +1,291 @@
+{
+ "when": "2026-10-31 10:31",
+ "old": {
+  "pages": [
+   {
+    "url": "https://en.wikipedia.org/wiki/Crappie",
+    "ok": true,
+    "error": "",
+    "seconds": 0.387,
+    "chars": 14893,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://en.wikipedia.org/wiki/Special_education",
+    "ok": true,
+    "error": "",
+    "seconds": 0.474,
+    "chars": 109229,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://docs.python.org/3/library/json.html",
+    "ok": true,
+    "error": "",
+    "seconds": 0.122,
+    "chars": 28987,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 1
+   },
+   {
+    "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/main",
+    "ok": true,
+    "error": "",
+    "seconds": 0.128,
+    "chars": 6963,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 1
+   },
+   {
+    "url": "https://www.gutenberg.org/ebooks/1342",
+    "ok": true,
+    "error": "",
+    "seconds": 0.3,
+    "chars": 3448,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://github.com/bertrandmbanwi/Jarvis",
+    "ok": true,
+    "error": "",
+    "seconds": 0.576,
+    "chars": 18683,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 4
+   },
+   {
+    "url": "https://www.nps.gov/yell/index.htm",
+    "ok": true,
+    "error": "",
+    "seconds": 0.116,
+    "chars": 3746,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 1
+   },
+   {
+    "url": "https://example.com",
+    "ok": true,
+    "error": "",
+    "seconds": 0.125,
+    "chars": 159,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://www.loc.gov/about/",
+    "ok": true,
+    "error": "",
+    "seconds": 0.173,
+    "chars": 4471,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://www.ruby-lang.org/en/",
+    "ok": true,
+    "error": "",
+    "seconds": 0.117,
+    "chars": 15522,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://www.cdc.gov/ncbddd/developmentaldisabilities/facts.html",
+    "ok": false,
+    "error": "HTTPStatusError: Client error '403 Forbidden' for url 'https://www.cdc.gov/ncbddd/developmentaldisabilities/facts.html'\nFor more information check: https://deve",
+    "seconds": 0.215,
+    "chars": 0,
+    "phrases_found": 0,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://text.npr.org/",
+    "ok": true,
+    "error": "",
+    "seconds": 0.316,
+    "chars": 1950,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   }
+  ],
+  "safety": [
+   {
+    "url": "http://127.0.0.1:8765/health",
+    "refused": false
+   },
+   {
+    "url": "http://localhost:11434/api/tags",
+    "refused": false
+   }
+  ],
+  "summary": {
+   "success": 11,
+   "pages": 12,
+   "phrase_recall": 0.938,
+   "boilerplate_hits": 7,
+   "median_seconds": 0.215,
+   "total_chars": 208051,
+   "unsafe_refused": 0,
+   "unsafe_cases": 2
+  }
+ },
+ "new": {
+  "pages": [
+   {
+    "url": "https://en.wikipedia.org/wiki/Crappie",
+    "ok": true,
+    "error": "",
+    "seconds": 0.359,
+    "chars": 13005,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://en.wikipedia.org/wiki/Special_education",
+    "ok": true,
+    "error": "",
+    "seconds": 0.479,
+    "chars": 95021,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://docs.python.org/3/library/json.html",
+    "ok": true,
+    "error": "",
+    "seconds": 0.132,
+    "chars": 25040,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 1
+   },
+   {
+    "url": "https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/main",
+    "ok": true,
+    "error": "",
+    "seconds": 0.125,
+    "chars": 3485,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 1
+   },
+   {
+    "url": "https://www.gutenberg.org/ebooks/1342",
+    "ok": true,
+    "error": "",
+    "seconds": 0.283,
+    "chars": 3008,
+    "phrases_found": 2,
+    "phrases": 2,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://github.com/bertrandmbanwi/Jarvis",
+    "ok": true,
+    "error": "",
+    "seconds": 0.614,
+    "chars": 14545,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 3
+   },
+   {
+    "url": "https://www.nps.gov/yell/index.htm",
+    "ok": true,
+    "error": "",
+    "seconds": 0.173,
+    "chars": 1480,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://example.com",
+    "ok": true,
+    "error": "",
+    "seconds": 0.127,
+    "chars": 156,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://www.loc.gov/about/",
+    "ok": true,
+    "error": "",
+    "seconds": 0.136,
+    "chars": 2929,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://www.ruby-lang.org/en/",
+    "ok": true,
+    "error": "",
+    "seconds": 0.133,
+    "chars": 1297,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://www.cdc.gov/ncbddd/developmentaldisabilities/facts.html",
+    "ok": true,
+    "error": "",
+    "seconds": 0.354,
+    "chars": 5163,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   },
+   {
+    "url": "https://text.npr.org/",
+    "ok": true,
+    "error": "",
+    "seconds": 0.233,
+    "chars": 1542,
+    "phrases_found": 1,
+    "phrases": 1,
+    "boilerplate": 0
+   }
+  ],
+  "safety": [
+   {
+    "url": "http://127.0.0.1:8765/health",
+    "refused": true
+   },
+   {
+    "url": "http://localhost:11434/api/tags",
+    "refused": true
+   }
+  ],
+  "summary": {
+   "success": 12,
+   "pages": 12,
+   "phrase_recall": 1.0,
+   "boilerplate_hits": 5,
+   "median_seconds": 0.233,
+   "total_chars": 166671,
+   "unsafe_refused": 2,
+   "unsafe_cases": 2
+  }
+ }
+}

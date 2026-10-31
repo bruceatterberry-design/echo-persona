@@ -64,10 +64,21 @@ async function load() {
     ['Messages in conversation log', d.conversation_turns], ['Voice recordings kept', (d.voice_minutes ?? '—') + ' min'],
     ['Phone sessions copied', d.phone_sessions], ['Last phone session', d.last_phone_session ? d.last_phone_session.replace(/(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d).*/, '$1-$2-$3 $4:$5') : '—'],
     ['Face frames', d.face_frames], ['Personality', `${d.approved_traits ?? 0} approved traits` + (d.summary_lines_in_use ? `, ${d.summary_lines_in_use}-line summary in use` : '')]]));
+  const u = d.upkeep || {};
+  m.appendChild(card('Memory upkeep (nightly)', [
+    ['Last run', u.at ? new Date(u.at * 1000).toLocaleString() + (u.seconds != null ? ` (${u.seconds} s)` : '') : 'not yet', u.problems && u.problems.length ? 'bad' : u.at ? 'ok' : 'warn'],
+    ['People, places and things', d.people_and_things ?? '—'], ['Facts found in memories', d.facts_found ?? '—'],
+    ['Conversations', d.conversations ?? '—'], ['Related memories linked', u.links ?? '—'],
+    ['Near-repeats to review', u.repeats ?? '—'], ['Facts said more than once', u.facts_said_more_than_once ?? '—'],
+    ['Possible contradictions flagged', u.conflicts_flagged ?? '—', u.conflicts_flagged ? 'warn' : 'ok'],
+    ['New patterns noticed', u.patterns ?? '—'],
+    ['Problems', u.problems && u.problems.length ? u.problems.join('; ') : 'none', u.problems && u.problems.length ? 'bad' : 'ok']]));
   const b = r.backups;
   m.appendChild(card('Backups', [
     ['Recordings copy (internal drive)', age(b.dataset_copy) + (b.dataset_copy.recordings_ok ? `, ${b.dataset_copy.recordings_ok} verified` : ''), ageCls(b.dataset_copy, 14)],
-    ['Memory snapshot', age(b.memory_snapshot), ageCls(b.memory_snapshot, 30)],
+    ['Memory snapshot', age(b.memory_snapshot), ageCls(b.memory_snapshot, 3)],
+    ['Restore drill (weekly)', b.restore_drill.days === null ? 'not yet' : (b.restore_drill.ok ? 'passed ' : 'FAILED ') + age(b.restore_drill)
+      + (b.restore_drill.seconds != null ? ` (${b.restore_drill.seconds} s)` : ''), b.restore_drill.ok === false ? 'bad' : ageCls(b.restore_drill, 10)],
     ['Off-site encrypted copy', b.offsite.days === null ? 'not made yet' : age(b.offsite) + (b.offsite.where ? ` on ${b.offsite.where}` : ''), ageCls(b.offsite, 60)],
     ['Time Machine', 'automatic (System Settings → General → Time Machine)']]));
   const s = r.speed;

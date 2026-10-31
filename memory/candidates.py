@@ -12,6 +12,8 @@ import re
 
 import httpx
 
+from core.llm import chat_post
+
 from memory.store import MemoryStore
 
 PERIODS = ["childhood", "teen", "young_adult", "adult", "recent", "unknown"]
@@ -71,7 +73,8 @@ def extract(transcript: str, question: str, host: str, model: str, default_perio
     """Ask the local model for memory notes in a transcript. Returns grounded suggestions ([] if nothing/failed)."""
     if len(transcript.split()) < 12:
         return []
-    r = httpx.post(f"{host}/api/chat", timeout=timeout, json={
+    r = chat_post(host, timeout=timeout, body={"think": False,   # background job: no thinking (slow)
+        
         "model": model, "stream": False, "keep_alive": "24h", "format": SCHEMA,
         # a bigger context only for long stories: changing it makes Ollama reload the model (slow next reply)
         "options": {"temperature": 0.1, "num_predict": 1200, **({"num_ctx": 8192} if len(transcript) > 6000 else {})},

@@ -32,3 +32,4 @@ config/google-client.json
 config/personality.yaml
 config/claude.json
 *.apk
+backups/

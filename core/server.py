@@ -11,6 +11,7 @@ import subprocess
 import os
 import re
 import threading
+from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -21,7 +22,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response, Streami
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from core import browser
+from core import browser, music, permissions, tools, trainer as training
 from core.config import ROOT, PersonaConfig, load_config, load_personality
 from core.llm import LLMBackend, make_backend
 from core.schema import StreamParser
@@ -37,11 +38,16 @@ from voice.studio import CONSENT_TEXT, MAX_TAKE_BYTES, Studio, StudioError
 from voice.wake import detect_end, detect_wake, is_noise_transcript
 from voice.speaker import NAME_RE as SPEAKER_NAME_RE, SpeakerID
 from memory.store import LIFE_FIELDS, Kind, Memory, MemoryStore, Period, Status, format_for_prompt, format_summaries, parse_remember
-from memory import summarize as summarizer
+from memory import archive, summarize as summarizer
+from memory.entities import Entities
+from memory.retrieve import Retriever, format_for_message
+from memory import backup as mem_backup, consolidate
+from memory.context import Pack
+from memory.learn import Learner
 from memory import conflicts as conflict_check
 from memory.embed import Embedder
 from memory import candidates as mem_candidates
-from memory.curiosity import Curiosity, asked_in, hint as curiosity_hint
+from memory.curiosity import ASK_ME, Curiosity, asked_in, hint as curiosity_hint
 from core.llm import OllamaBackend
 
 log = logging.getLogger("echo")
@@ -152,7 +158,56 @@ class ClaudeIn(BaseModel):
     jobs: dict[str, bool] | None = None
 
 
-MEANING_MIN = 0.62   # nomic-embed-text cosine; below this, matches were mostly unrelated (measured 2026-10-30)
+
+
+SYSTEM_EXTRA = (
+    "\n\nI can open web pages in Chrome on this Mac when asked with \"open\" or \"go to\" plus a saved place (shortcuts "
+    "in config/browser.json, such as the Voice Studio or the Weather Channel) or an address said out "
+    "loud (\"go to apple dot com\"). That happens before I answer. If a request to open something reaches me anyway, "
+    "I never say I can't open websites; I ask them to say it again with the address, like \"go to apple dot com\"."
+    "\n\nI can also read a web page myself when someone gives me its address and asks what it says: I use my "
+    "read_webpage tool when it's offered, and I never ask them to open, copy or paste the page for me."
+    "\n\nI can play music on YouTube when asked like \"play Hotel California on YouTube\" or \"open YouTube and play "
+    "some blues\"; that also happens before I answer. I never say I'm opening, playing or doing something unless it "
+    "really happened: if such a request reaches me, it didn't, so I say I couldn't do it that way and suggest those words."
+    "\n\nWhen someone talks to me out loud, their message may start with a note like [Recognised by voice: the owner "
+    "is speaking]. I trust it, so I know who I'm talking with, but voice recognition can be wrong: if something "
+    "important depends on who it is, I ask kindly. I never read these notes aloud."
+    "\n\nHow I use my memory: I only know what is in my notes (above, and the notes that come with a message) and "
+    "what is said in this conversation. When someone asks about a person, pet, place or event, I tell exactly what my "
+    "notes say, in a sentence or two, then say that's all I remember and invite them to tell me more. I never add "
+    "details to make a memory sound fuller: no feelings, habits, looks, outcomes, places or times that aren't written "
+    "down. If my notes have nothing, I say I don't know.\n"
+    "Two made-up examples to show how (Pat, Rex and Lake Elm are not real; they are not in my memory):\n"
+    "- If my notes said only \"Pat has a dog, Rex.\" and someone asked \"Tell me about Rex\", I'd say: \"Rex is Pat's "
+    "dog. That's all I have about him so far. Will you tell me more?\" Not \"Rex is a playful dog who loves walks\".\n"
+    "- If my notes said only \"Pat went to Lake Elm once.\" and someone asked about that trip, I'd say: \"Pat went to "
+    "Lake Elm once; that's all my notes say, so I don't know how it went.\" I don't guess how it went, who was there, "
+    "how anyone felt, how often it happened, or what anyone learned from it, and I don't join two separate notes into "
+    "one story unless a note says they belong together.")
+
+
+def voice_ask(owner_name: str = "") -> str:
+    """Hint when the voice check wasn't sure but it sounds most like the owner."""
+    q = f"Is that you, {owner_name}?" if owner_name else "Is that you?"
+    return (f"[My voice check wasn't sure who this is, but it sounds most like the owner. I answer normally without using "
+            f"a name, then END my reply with exactly: \"{q}\"]")
+
+
+def self_named(text: str, names: dict[str, str]) -> str | None:
+    """"This is Pat" / "Hi Echo, it's Sam" → the profile ("owner" / "loved_one") whose configured name was said
+    (owner_name / loved_one_name in config/echo.yaml). "It's Pat's birthday" → None. No names set → None."""
+    for profile, name in names.items():
+        if not name:
+            continue
+        pat = (r"(?:^|[.!?,]\s*)(?:(?:hey|hi|hello|okay|ok)[,]?\s+)?(?:echo[,.]?\s+)?(?:this\s+is|it'?s|it\s+is|i'?m|"
+               r"i\s+am|here'?s)\s+" + re.escape(name.split()[0]) + r"(?!'|’|s\b)\b")
+        if re.search(pat, text or "", re.I):
+            return profile
+    return None
+
+
+VOICE_YES = re.compile(r"^\W*(?:yes|yeah|yep|yup|it'?s me|it is|that'?s me|sure is|of course)\b", re.I)
 
 
 def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = None,
@@ -176,6 +231,10 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 answered_on_phone.add(json.loads(t).get("task_id"))
     except Exception:
         pass
+    ents = Entities(store)   # people, places, things and facts (seeded from config/entities.json)
+    recall = Retriever(store, ents, embedder.model if embedder else None)   # memory/retrieve.py (Phase 3)
+    pack = Pack(store, ents, recall)   # memory/context.py (Phase 5): what I always have in mind
+    learner = Learner(store, cfg.resolve(cfg.dataset_root))   # memory/learn.py (Phase 7): documents and web pages
     curiosity = Curiosity(store, cfg.ask_enabled, cfg.ask_every_minutes, cfg.ask_min_turns, answered=answered_on_phone)
 
     def check_conflicts_later(m: Memory, dup: bool) -> None:
@@ -189,21 +248,24 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             except Exception as e:
                 log.warning("conflict check failed: %s", type(e).__name__)
         threading.Thread(target=run, daemon=True, name="memory-conflicts").start()
-    SYSTEM_EXTRA = (
-        "\n\nI can open web pages in Chrome on this Mac when asked with \"open\" or \"go to\" plus a saved place (shortcuts "
-        "in config/browser.json, such as the Voice Studio or the Weather Channel) or an address said out "
-        "loud (\"go to apple dot com\"). That happens before I answer. If a request to open something reaches me anyway, "
-        "I never say I can't open websites; I ask them to say it again with the address, like \"go to apple dot com\"."
-        "\n\nWhen someone talks to me out loud, their message may start with a note like [Recognised by voice: the owner "
-        "is speaking]. I trust it, so I know who I'm talking with, but voice recognition can be wrong: if something "
-        "important depends on who it is, I ask kindly. I never read these notes aloud.")
-    prompt = {"text": load_personality(cfg) + SYSTEM_EXTRA}   # reloaded when a personality version is restored
+    lessons_path = Path(store.path).parent / "lessons.json"   # core/trainer.py: rules learned in "Train Echo"
+    prompt = {"text": load_personality(cfg) + SYSTEM_EXTRA + training.lessons_block(lessons_path)}   # reloaded when a personality version is restored or a lesson changes
     voice_cfg = ROOT / "config" / "voice.json"   # {"stt": "parakeet" | "whisper", "reference": ...}
     stt_choice = (json.loads(voice_cfg.read_text()).get("stt") if voice_cfg.exists() else None) or "whisper"
     stt = stt or make_stt(stt_choice, cfg.voice.stt_model, cfg.voice.language)
     stt_ready = {"ok": False}
+    tools_on = os.environ.get("ECHO_TOOLS", "1") != "0"   # Echo's own web tools (core/tools.py); 0 turns them off
+    tools_cfg = ROOT / "config" / "tools.json"                # follow_links any|same_site|never, max_pages (core/permissions.py)
+    tool_audit = permissions.Audit(Path(store.path).parent / "tool_audit.sqlite")   # beside the memory DB (tests: a temp dir)
+    tools.AUDIT = tool_audit
     from core.claude_helper import ClaudeHelper   # optional: the owner's Claude account for background jobs (off by default)
     helper = ClaudeHelper(ROOT / "config" / "claude.json", ROOT / "data" / "claude-usage.json")
+
+    def reload_lessons() -> None:
+        prompt["text"] = load_personality(cfg) + SYSTEM_EXTRA + training.lessons_block(lessons_path)
+        log.info("lessons changed: instructions reloaded")
+    trainer = training.Trainer(Path(store.path).parent / "training.sqlite", lessons_path, ROOT / "docs" / "TRAINING_REQUESTS.md",
+                               helper, instructions=lambda: prompt["text"], on_lessons=reload_lessons)
 
     async def warm_stt():  # load speech recognition in the background so the first voice turn is fast
         try:
@@ -228,6 +290,46 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             log.warning("llm warmup failed: %s", type(e).__name__)
 
     last_turn = {"at": time.time()}
+    originals = {"at": 0.0}   # last time finished days were archived and new originals catalogued
+
+    def consolidate_due(now: float) -> bool:
+        """Nightly (2–5 am) once quiet for 10 minutes; or any time if it hasn't run for 30 hours."""
+        last = json.loads(store.get_meta("consolidation_last", "{}")).get("at", 0)
+        if now - last_turn["at"] < 600:
+            return False
+        return now - last > 30 * 3600 or (now - last > 20 * 3600 and 2 <= time.localtime(now).tm_hour < 5)
+
+    def run_consolidation() -> dict:
+        r = consolidate.run(store, ents, embedder.model if embedder else None, conflict_judge, vindex=recall.index)
+        if not r["ok"]:
+            log.warning("memory upkeep stopped: %s", "; ".join(r["problems"]))
+            return r
+        log.info("memory upkeep: %d links, %d repeats, %d conflicts flagged, %d patterns, %.1f s", r["links"],
+                 r["repeats"], r["conflicts_flagged"], len(r["patterns"]), r["seconds"])
+        if Path(store.path).resolve() != cfg.resolve(cfg.memory_db).resolve():
+            return r   # snapshots only ever of Echo's own memory database
+        folder = cfg.resolve(cfg.backup_dir)   # nightly snapshot (14 daily, 12 monthly, yearly); weekly restore drill
+        try:
+            snap = mem_backup.snapshot(store, folder)
+            log.info("memory snapshot: %s", ", ".join(snap["made"]) or "already made today")
+            last = json.loads((folder / "drill.json").read_text())["at"] if (folder / "drill.json").exists() else 0
+            if time.time() - last > 7 * 86400:
+                d = mem_backup.drill(store, folder, cfg.resolve(cfg.dataset_root))
+                log.info("restore drill: %s in %.1f s", "ok" if d["ok"] else "FAILED", d["total_s"])
+        except Exception as e:
+            log.warning("memory snapshot/drill failed: %s: %s", type(e).__name__, e)
+        return r
+
+    def keep_originals():
+        """Level 1 upkeep (memory/archive.py): link old notes once, archive finished days, catalogue new originals."""
+        root = cfg.resolve(cfg.dataset_root)
+        if (n := archive.link_old_notes(store)):
+            log.info("old conversation notes linked to their turns: %d", n)
+        if (days := archive.archive_days(store, root)):
+            log.info("conversation days archived: %d", len(days))
+        c = archive.catalogue(store, root, max_bytes=2 << 30)   # at most 2 GB read per run; the rest next time
+        if c.get("added") or c.get("changed"):
+            log.info("originals catalogued: %s", c)
 
     async def summarize_when_quiet():
         """Every 15 s: if nobody has spoken for 20 s, write notes for conversation that slid out of view, then re-read
@@ -246,6 +348,14 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 await asyncio.to_thread(suggest_memories, {"transcript": a["text"], "question": a["question"],
                                                            "source": a["source"], "period": a["period"]})
             try:
+                if (n := archive.build_episodes(store)):
+                    log.info("episodes made: %d", n)
+                if time.time() - originals["at"] > 3600:
+                    originals["at"] = time.time()
+                    await asyncio.to_thread(keep_originals)
+            except Exception as e:
+                log.warning("originals upkeep failed: %s: %s", type(e).__name__, e)
+            try:
                 n = await asyncio.to_thread(summarizer.summarize_pending, store, len(store.turns_window()),
                                             cfg.llm.host, cfg.llm.model, 4, helper)
                 if n:
@@ -253,6 +363,31 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     await backend.warm(build_messages("Hello."))
             except Exception as e:
                 log.warning("conversation notes failed: %s", type(e).__name__)
+            if time.time() - last_turn["at"] < 20:
+                continue
+            try:
+                if consolidate_due(time.time()):
+                    await asyncio.to_thread(run_consolidation)
+            except Exception as e:
+                log.warning("memory upkeep failed: %s: %s", type(e).__name__, e)
+            try:   # memories changed (new facts, "remember that", upkeep): refresh the pack now, while it's quiet, and
+                # read the new prompt once, so the next reply doesn't have to (~20 s on qwen3.5 after a change)
+                if pack.stale() and time.time() - last_turn["at"] >= 20:
+                    pack.get(refresh=True)
+                    await backend.warm(build_messages("Hello."))
+                    log.info("context pack refreshed and read")
+            except Exception as e:
+                log.warning("context pack refresh failed: %s", type(e).__name__)
+            try:   # documents and web pages someone asked me to learn (one at a time)
+                if (n := await asyncio.to_thread(learner.process_pending, 1)):
+                    log.info("learning jobs finished: %d", n)
+            except Exception as e:
+                log.warning("learning failed: %s", type(e).__name__)
+            try:   # people, places and facts from memories (~10 s each on the local model), 2 at a time
+                if (n := await asyncio.to_thread(ents.extract_pending, cfg.llm.host, cfg.llm.model, 2)):
+                    log.info("memories read for people and facts: %d", n)
+            except Exception as e:
+                log.warning("fact extraction failed: %s", type(e).__name__)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -264,14 +399,41 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     studio = studio or Studio(cfg.resolve(cfg.dataset_root))
     faces = faces or FaceLibrary(cfg.resolve(cfg.dataset_root))
     app = FastAPI(title="Echo Persona Core", lifespan=lifespan)
+
+    @app.get("/api/tools")
+    async def tools_report(limit: int = 50):
+        """What tools Echo has, the settings, and the latest uses (no page text)."""
+        return {"settings": permissions.load_settings(tools_cfg),
+                "tools": {k: {"does": v[0], "risk": v[1], "asks_first": v[2]} for k, v in permissions.CATALOGUE.items()},
+                "recent": tool_audit.recent(limit)}
     app.state.store = store
 
+
+    # Echo listens for the owner's voice now and then (the owner, 2026-10-31: "he swaps the owner with the loved one"): his profile came
+    # from studio takes, and the room mic scored him only 0.30-0.44. Room-mic prints teach it the room:
+    #  - a phrase that is confidently the owner adds itself, at most once every AUTO_EVERY_S;
+    #  - an unclear phrase that sounds most like the owner makes Echo ask "Is that you?" (at most every ASK_EVERY_S);
+    #    "yes" adds it. Only the owner's profile ever grows this way (the loved one's only with her own consent, on /voices.html).
+    voice = {"candidate": None, "check": None, "asked_at": 0.0, "auto_at": 0.0, "last": None}
+    AUTO_EVERY_S, ASK_EVERY_S, AUTO_SCORE, AUTO_GAP = 6 * 3600, 30 * 60, 0.82, 0.20
 
     async def identify_speaker(audio) -> dict:
         if not speakers.profiles or not speakers.available:
             return {}
         try:
             r = await asyncio.to_thread(speakers.identify, audio)
+            log.info("speaker %s %s", r["speaker"], r["scores"])   # scores only (no words), to tune the thresholds
+            emb, now = r.pop("emb", None), time.time()
+            if emb is not None:
+                voice["last"] = {"emb": emb, "at": now, "scores": r.get("scores", {})}   # for "This is the owner/the loved one"
+            if emb is not None and r.get("best") == "owner":
+                if r["speaker"] == "owner" and r["score"] >= AUTO_SCORE and r["gap"] >= AUTO_GAP \
+                        and now - voice["auto_at"] >= AUTO_EVERY_S:
+                    n = await asyncio.to_thread(speakers.add_live, "owner", emb, "auto")
+                    voice["auto_at"] = now
+                    log.info("voice: room print added for owner (auto), %d live", n)
+                elif r["speaker"] == "unknown":
+                    voice["candidate"] = {"emb": emb, "at": now}
             return {"speaker": r["speaker"], "speaker_score": r["score"]}
         except Exception as e:   # never let this break listening
             log.warning("speaker check failed: %s", type(e).__name__)
@@ -312,8 +474,38 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     # ---- memory API (used by the "What I remember" panel) ----
     @app.get("/api/memory")
-    def list_memory():
-        return [m.model_dump() for m in store.all()]
+    def list_memory():   # learned passages are listed per document on My memories → Learn, not here
+        return [m.model_dump() for m in store.all() if m.kind != "knowledge"]
+
+    # ---- learning from documents and web pages (memory/learn.py) ----
+    @app.get("/api/learn")
+    def learn_jobs():
+        return learner.jobs()
+
+    @app.post("/api/learn/file")
+    async def learn_file(request: Request, name: str, title: str = ""):
+        body = await request.body()
+        try:
+            jid = await asyncio.to_thread(learner.add_file, name, body, title)
+        except (ValueError, RuntimeError) as e:
+            raise HTTPException(400, str(e))
+        return {"job": jid}
+
+    @app.post("/api/learn/web")
+    async def learn_web(body: dict):
+        try:
+            jid = await asyncio.to_thread(learner.add_web, str(body.get("url", "")).strip(), str(body.get("title", "")))
+        except (ValueError, RuntimeError, httpx.HTTPError) as e:
+            raise HTTPException(400, str(e) or type(e).__name__)
+        return {"job": jid}
+
+    @app.post("/api/learn/{jid}/forget")
+    def learn_forget(jid: int):
+        return {"hidden": learner.forget(jid)}
+
+    @app.post("/api/learn/{jid}/restore")
+    def learn_restore(jid: int):
+        return {"restored": learner.restore(jid)}
 
     @app.post("/api/memory")
     def add_memory(m: Memory):
@@ -333,9 +525,82 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     @app.delete("/api/memory/{mid}")
     def forget_memory(mid: int):
+        """Forget = hide: Echo stops using it; it's kept and can be restored (the owner, 2026-10-31)."""
         if not store.forget(mid):
             raise HTTPException(404)
-        return {"forgotten": mid}
+        return {"forgotten": mid, "hidden": True}
+
+    @app.get("/api/memory/hidden")
+    def list_hidden():
+        return [m.model_dump() for m in store.hidden()]
+
+    @app.post("/api/memory/{mid}/restore")
+    def restore_memory(mid: int):
+        m = store.restore_hidden(mid)
+        if not m:
+            raise HTTPException(404)
+        return m.model_dump()   # its meaning vector was kept, so search by meaning finds it again at once
+
+    @app.get("/api/memory/{mid}/history")
+    def memory_history(mid: int):
+        return store.history(mid)
+
+    # ---- Level 2: people, places, things and facts (memory/entities.py) ----
+    @app.get("/api/entities")
+    def list_entities():
+        return ents.list()
+
+    @app.get("/api/about")
+    def about(name: str):
+        """Everything about one person/place/thing: /api/about?name=the loved one"""
+        if not (a := ents.about(name)):
+            raise HTTPException(404, "I don't know anyone or anything by that name yet")
+        return a
+
+    @app.get("/api/entities/{eid}")
+    def get_entity(eid: int):
+        if not (a := ents.about(eid)):
+            raise HTTPException(404)
+        return a
+
+    # ---- consolidation (memory/consolidate.py) ----
+    @app.post("/api/memory/consolidate")
+    async def consolidate_now():
+        return await asyncio.to_thread(run_consolidation)
+
+    @app.get("/api/memory/consolidation")
+    def consolidation_report():
+        return {"last": json.loads(store.get_meta("consolidation_last", "{}")),
+                "problem": json.loads(store.get_meta("consolidation_problem", "") or "null")}
+
+    @app.get("/api/memory/repeats")
+    def memory_repeats():
+        return consolidate.repeats(store)
+
+    @app.get("/api/memory/{mid}/related")
+    def memory_related(mid: int):
+        return consolidate.related(store, mid)
+
+    # ---- Level 1: originals and episodes (memory/archive.py) ----
+    @app.get("/api/archive/status")
+    def archive_status():
+        return archive.status(store)
+
+    @app.get("/api/episodes")
+    def list_episodes(since: float = 0.0, until: float | None = None, limit: int = 100):
+        return archive.episodes(store, since, until, min(limit, 1000))
+
+    @app.get("/api/episodes/{eid}")
+    def get_episode(eid: int):
+        if not (e := archive.episode(store, eid)):
+            raise HTTPException(404)
+        return e
+
+    @app.get("/api/turns/{tid}/episode")
+    def turn_episode(tid: int):
+        if not (e := archive.episode_for_turn(store, tid)):
+            raise HTTPException(404, "not in an episode yet (the conversation may still be going)")
+        return e
 
     @app.get("/api/memory/conflicts")
     def list_conflicts():
@@ -354,8 +619,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         for c in store.candidates("pending"):
             similar = None
             if embedder and (v := embedder.query(c["content"])):   # "I may already know this"
-                near = store.by_meaning(v, embedder.model, 1, min_sim=0.8)
-                similar = near[0][0].content if near else None
+                ids, sims, _, _ = recall.index.search(v, 1)   # exact up to 50k memories, FAISS beyond
+                similar = m.content if len(ids) and sims[0] >= 0.8 and (m := store.get(int(ids[0]))) else None
             out.append(c | {"similar": similar})
         return out
 
@@ -439,7 +704,9 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             audio = await asyncio.to_thread(decode_audio, await request.body())
         except STTError as e:
             raise HTTPException(400, str(e))
-        return await asyncio.to_thread(speakers.identify, audio)
+        r = await asyncio.to_thread(speakers.identify, audio)
+        r.pop("emb", None)   # the voice print itself stays on the server
+        return r
 
     @app.delete("/api/speakers/{name}")
     def forget_speaker(name: str):
@@ -841,7 +1108,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             r = versions.restore(vid)
         except KeyError:
             raise HTTPException(404)
-        prompt["text"] = load_personality(cfg) + SYSTEM_EXTRA
+        prompt["text"] = load_personality(cfg) + SYSTEM_EXTRA + training.lessons_block(lessons_path)
         log.info("personality version restored: %s", vid)
         return r
 
@@ -934,8 +1201,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     @app.delete("/api/turns")
     def clear_conversation():
-        store.clear_turns()
-        return {"cleared": True}
+        """Clears Echo's view only; the conversation stays in the archive (the owner, 2026-10-31)."""
+        return {"cleared": True, "archived_turns": store.clear_turns()}
 
     # ---- conversation ----
     def build_messages(text: str, speaker: str | None = None, qvec: list[float] | None = None,
@@ -944,35 +1211,145 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         parts that change every message (The owner's example sentences, memory search). Ollama reuses its work on an
         unchanged beginning, which cuts the wait for the first word."""
         profile = persona.load_profile(pdir)
-        facts, notes = store.facts(), store.summaries()
-        stable = [prompt["text"], persona.traits_block(profile),
-                  format_for_prompt(facts if len(facts) <= 40 else facts[-40:], store.conflicted_ids()),   # rarely change
+        notes = store.summaries()
+        pack_text, pack_ids = pack.get(refresh=False)   # people + top memories; refreshed in quiet time (below)
+        stable = [prompt["text"], persona.traits_block(profile), pack_text,
                   format_summaries(notes[-3:])]                                     # the latest conversation notes
         system = "\n\n".join(x for x in stable if x)
         # Older notes or facts that match this message go with the message itself, not the system block: Ollama merges
         # every system message into the first one, so anything that changes there makes it re-read the whole
         # conversation (≈ 3 s). The stored conversation keeps only what was really said.
-        recent_ids = {m.id for m in notes[-3:]} | {m.id for m in facts[-40:]}
-        # only clearly related notes: at least 2 meaningful words in common (not "how", "day", "the"…), at most 2
-        said = content_words(text)
-        extra = [m for m in store.search(text, limit=8)
-                 if m.id not in recent_ids and len(said & content_words(m.content)) >= 2][:2]
-        if qvec is not None and embedder:   # by meaning first ("dinner" finds a talk about a favourite recipe), then keywords
-            near = [m for m, _ in store.by_meaning(qvec, embedder.model, limit=6, min_sim=MEANING_MIN)
-                    if m.id not in recent_ids]
-            extra = list({m.id: m for m in near[:2] + extra}.values())[:2]
+        recent_ids = {m.id for m in notes[-3:]} | pack_ids
+        # memory/retrieve.py: by meaning, words, who/what is named ("my" = the speaker), and when ("on Thursday");
+        # at most 3, only ones the message really points to, plus short facts about the people named
+        res = recall.retrieve(text, qvec, speaker, k=3, exclude=recent_ids)
+        log.info("recall %d memories, facts about %d, %.1f ms: %s", len(res.hits), len(res.facts), res.ms,
+                 "; ".join("+".join(r.split()[0] for r in h.why) for h in res.hits))   # reasons only, no content
         user = text
-        if extra:
-            user = "[From my notes, in case it helps: " + " | ".join(m.content for m in extra) + "]\n\n" + text
+        store.note_use([h.memory.id for h in res.hits])
+        if (note := format_for_message(res, store)):
+            user = note + "\n\n" + text
         if extra_hint:
             user = user + "\n\n" + extra_hint
         if speaker:   # like the notes, this goes with the message only; the stored conversation keeps what was said
             who = {"owner": "the owner", "loved_one": cfg.loved_one_name or "my loved one"}.get(speaker, speaker.replace("_", " "))
             user = (f"[Recognised by voice: {who} is speaking]" if speaker != "unknown"
-                    else "[Voice not recognised for sure]") + "\n" + user
-        return [{"role": "system", "content": system}] + store.turns_window() + [{"role": "user", "content": user}]
+                    else "[Voice not recognised for sure: I don't call anyone by name until I know who it is]") + "\n" + user
+        window = store.turns_window(as_sent=True)
+        waiting = curiosity.pending() is not None   # a question I'm waiting on stays visible in my last reply
+        last_a = max((i for i, t in enumerate(window) if t["role"] == "assistant"), default=-1)
+        window = [t if t["role"] != "assistant" or (waiting and i == last_a) else {**t, "content": curiosity.scrub(t["content"])}
+                  for i, t in enumerate(window)]
+        return [{"role": "system", "content": system}] + window + [{"role": "user", "content": user}]
 
     windows: list[WebSocket] = []  # open Echo windows; only the newest one may use the microphone
+
+    async def training_hint(sock: WebSocket) -> None:
+        try:
+            await sock.send_json({"type": "training", "testing": trainer.testing, "busy": trainer.busy,
+                                  "wrong": len(trainer.pending())})
+        except Exception:
+            pass
+
+    async def show_step(sock: WebSocket, step: "training.Step") -> None:
+        """Training conversation (core/trainer.py): say it, offer buttons, replay the owner's words, or wait for Claude."""
+        while step:
+            if step.say:
+                store.add_turn("assistant", step.say)
+                await sock.send_json({"type": "reply", "text": step.say, "expression": step.expression,
+                                      "intensity": 0.3 if step.expression != "neutral" else 0.0, "training": True})
+            if step.choices:
+                await sock.send_json({"type": "choices", "options": step.choices})
+            if step.replay:
+                await sock.send_json({"type": "replay", **step.replay})
+            await training_hint(sock)
+            if not step.work:
+                await sock.send_json({"type": "state", "state": "idle"})
+                return
+            await sock.send_json({"type": "state", "state": "thinking"})
+            try:
+                step = await asyncio.to_thread(step.work)
+            except Exception as e:  # noqa: BLE001
+                log.warning("training step failed: %s", type(e).__name__)
+                trainer.state = {"mode": "idle"}
+                step = training.Step("Something went wrong in training, so I've paused it. Say \"Train Echo\" to go on.",
+                                     expression="neutral")
+
+    # core/music.py: "listen to this <YouTube link>" → approved genres/artists only (config/music.json), one at a time
+    music_list = ROOT / "config" / "music.json"
+    music_lock = asyncio.Lock()
+
+    async def tell_windows(text: str, expression: str = "neutral", why: str = "something I said on my own") -> None:
+        """Something Echo says on his own (e.g. after listening): shown, spoken and kept in the conversation.
+        In testing mode it gets 👍/👎 too (logged as said on his own: it can't be replayed)."""
+        store.add_turn("assistant", text)
+        fid = trainer.record(f"({why})", text, training.SELF)
+        for w in windows[-1:]:
+            try:
+                await w.send_json({"type": "reply", "text": text, "expression": expression,
+                                   "intensity": 0.3 if expression != "neutral" else 0.0, **({"fid": fid} if fid else {})})
+                await w.send_json({"type": "state", "state": "idle"})
+            except Exception:
+                pass
+
+    quiet = {"until": 0.0}         # no "tell me about your life" questions until then (after commands, during songs)
+    along: dict = {"task": None, "closed": None}   # the song I'm listening along to (only the newest one)
+
+    def hush(seconds: float = 300) -> None:
+        quiet["until"] = max(quiet["until"], time.time() + seconds)
+
+    async def run_listen(vid: str, by: str, along_mode: bool = False) -> "music.Result":
+        loop = asyncio.get_running_loop()
+
+        def stt_call(seg):
+            return asyncio.run_coroutine_threadsafe(stt.transcribe(seg), loop).result(timeout=120)
+        async with music_lock:
+            try:
+                res = await asyncio.to_thread(
+                    music.listen, vid, list_path=music_list, tmp_root=ROOT / "data" / "tmp" / "music", learner=learner,
+                    classify=music.ollama_classifier(cfg.llm.host, cfg.llm.model), stt_call=stt_call, by=by,
+                    along=along_mode)
+            except Exception as e:  # noqa: BLE001
+                log.warning("listen job crashed: %s", type(e).__name__)
+                res = music.Result(False, "Something went wrong while I was listening, sorry.")
+        tool_audit("listen_music", "youtube.com", "along" if along_mode else "asked", res.kind, 0,
+                   max(res.timings.values()) if res.timings else 0)
+        return res
+
+    async def listen_job(vid: str, by: str) -> None:
+        res = await run_listen(vid, by)
+        await tell_windows(res.say, "smiling" if res.ok else "neutral", "I said this after listening to a song you sent")
+
+    async def listen_along(vid: str, by: str, started: float, closed: asyncio.Event) -> None:
+        """the owner/the loved one asked me to play a song: I listen to it too, stay quiet while it plays, then talk about it.
+        When it ends I close the music window (the mic comes back); if they close it first, I talk right away."""
+        try:
+            res = await run_listen(vid, by, along_mode=True)
+            if not closed.is_set() and res.info and res.info.duration:
+                left = res.info.duration - (time.time() - started) + 4
+                hush(left + 300)
+                log.info("listening along id=%s kind=%s, speaking in %.0f s", vid, res.kind, left)
+                try:
+                    await asyncio.wait_for(closed.wait(), timeout=max(0.0, min(left, music.MAX_SECONDS)))
+                except asyncio.TimeoutError:
+                    pass
+            for w in windows[-1:]:
+                try:
+                    await w.send_json({"type": "music_stop"})   # song over: close it, mic back on
+                except Exception:
+                    pass
+            await asyncio.sleep(1.5)   # let the mic settle before I speak
+            await tell_windows(music.after_song(res), "smiling", "I said this when a song I listened along to ended")
+        except asyncio.CancelledError:   # another song was asked for: that one takes over
+            pass
+
+    async def start_music(sock: WebSocket, url: str, vid: str, by: str) -> None:
+        """Play in Echo's own music window (the page mutes the mic) and listen along."""
+        if along["task"] and not along["task"].done():
+            along["task"].cancel()
+        along["closed"] = asyncio.Event()
+        await sock.send_json({"type": "music", "url": url, "vid": vid})
+        along["task"] = asyncio.create_task(listen_along(vid, by, time.time(), along["closed"]))
 
     @app.post("/api/say")
     async def say_test(body: SayIn, request: Request):
@@ -1008,29 +1385,110 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             except Exception:
                 pass
         windows.append(sock)
-        await sock.send_json({"type": "history", "turns": store.recent_turns(MAX_TURNS)})
+        await sock.send_json({"type": "history", "turns": store.recent_turns(MAX_TURNS),
+                              "training": {"testing": trainer.testing, "busy": trainer.busy, "wrong": len(trainer.pending())}})
         asked: dict[str, str] = {}   # answers to my last "which one?" question, if I asked one
         try:
             while True:
                 msg = await sock.receive_json()
+                if msg.get("type") == "music_closed":   # the owner closed the music window: talk about it now
+                    if along.get("closed"):
+                        along["closed"].set()
+                    continue
+                if msg.get("type") == "music_failed":   # the window couldn't open one: open it in Chrome instead
+                    url = str(msg.get("url", ""))
+                    if music.video_id(url):
+                        await asyncio.to_thread(browser.run, browser.Action(say="", url=url))
+                    continue
+                if msg.get("type") == "feedback":   # 👍/👎 on a reply (testing mode)
+                    try:
+                        fid = int(msg.get("fid"))
+                    except (TypeError, ValueError):
+                        continue
+                    step = trainer.vote(fid, str(msg.get("vote", "")), str(msg.get("note", "")))
+                    log.info("feedback fid=%s vote=%s note=%s", fid, msg.get("vote"), bool(msg.get("note")))
+                    await training_hint(sock)
+                    if step:
+                        await show_step(sock, step)
+                    continue
+                replay_of = msg.get("replay_of") if isinstance(msg.get("replay_of"), int) else None
                 text = str(msg.get("text", "")).strip()[:4000]
                 # who said it, from the voice (spoken messages only); anything that isn't a known profile is ignored
                 speaker = msg.get("speaker") if msg.get("speaker") in (*speakers.profiles, "unknown") else None
                 if not text:
                     continue
                 last_turn["at"] = time.time()   # someone is talking: no note-writing now
-                act = (asked and browser.answer(text, asked)) or browser.parse(text)
+                # "This is the owner" / "This is the loved one", said out loud: that phrase is a fresh room-mic sample of their voice
+                # (the owner, 2026-10-31). Only for people who already have a profile (the loved one's was made with her consent).
+                if speaker and (named := self_named(text, {"owner": cfg.owner_name, "loved_one": cfg.loved_one_name})) \
+                        and named in speakers.profiles:
+                    last = voice["last"]
+                    sc = (last or {}).get("scores", {})
+                    other = max((v for k, v in sc.items() if k != named), default=0.0)
+                    clearly_other = other >= speakers.threshold and other - sc.get(named, 0.0) >= 0.15   # a joke? skip
+                    if last and time.time() - last["at"] < 30 and not clearly_other:
+                        try:
+                            n = await asyncio.to_thread(speakers.add_live, named, last["emb"], "said")
+                            log.info("voice: room print added for %s (said their name), %d live", named, n)
+                        except Exception as e:  # noqa: BLE001
+                            log.warning("voice sample failed: %s", type(e).__name__)
+                        voice["last"] = None
+                    speaker, voice["check"] = named, None   # they told me who they are
+                chk = voice["check"]
+                if chk and time.time() - chk["at"] < 180:   # the answer to my "Is that you?"
+                    voice["check"] = None
+                    if VOICE_YES.match(text):
+                        n = await asyncio.to_thread(speakers.add_live, "owner", chk["emb"], "confirmed")
+                        log.info("voice: room print added for owner (confirmed), %d live", n)
+                        say = f"Thanks{", " + cfg.owner_name if cfg.owner_name else ""}. I'll know your voice better now."
+                        store.add_turn("user", text, speaker)
+                        store.add_turn("assistant", say)
+                        await sock.send_json({"type": "reply", "text": say, "expression": "smiling", "intensity": 0.3})
+                        await sock.send_json({"type": "state", "state": "idle"})
+                        continue
+                if replay_of is None and (step := trainer.handle(text)):   # testing / "Train Echo" / yes-no / pick a fix
+                    hush()
+                    store.add_turn("user", text, speaker)
+                    await show_step(sock, step)
+                    continue
+                music_say = None
+                if (genre := music.add_request(text)):
+                    added = await asyncio.to_thread(music.add_genre, music_list, genre)
+                    music_say = (f"Okay, {genre} is on my music list now." if added else f"{genre.capitalize()} is already on my music list.")
+                elif (vid := music.listen_request(text)):
+                    busy = music_lock.locked()
+                    asyncio.create_task(listen_job(vid, speaker if speaker and speaker != "unknown" else "owner"))
+                    music_say = ("I'll listen to that as soon as I finish the song I'm on." if busy else
+                                 "I'll check it's music on my list, then listen. It takes a minute or two; I'll tell you when I'm done.")
+                    log.info("music request id=%s", vid)
+                if music_say:
+                    hush()
+                    store.add_turn("user", text, speaker)
+                    store.add_turn("assistant", music_say)
+                    fid = trainer.record(text, music_say, speaker, replay_of)   # commands can be wrong too: 👍/👎
+                    await sock.send_json({"type": "reply", "text": music_say, "expression": "smiling", "intensity": 0.3,
+                                          **({"fid": fid} if fid else {})})
+                    await sock.send_json({"type": "state", "state": "idle"})
+                    continue
+                act = (asked and browser.answer(text, asked)) or browser.parse_play(text, speaker) or browser.parse(text)
                 asked = {}
                 if act:   # "open the Weather Channel": done here, the LLM never picks an address
                     say = act.say
-                    if (act.url is not None or act.script) and not await asyncio.to_thread(browser.run, act):
+                    hush()
+                    who_by = speaker if speaker and speaker != "unknown" else "owner"
+                    top = await asyncio.to_thread(browser.youtube_top, act.play) if act.play else None
+                    if top and (vid := music.video_id(top)):   # play in my own window, mic off, listen along
+                        await start_music(sock, top, vid, who_by)
+                    elif (act.url is not None or act.script) and not await asyncio.to_thread(browser.run, act):
                         say = "I couldn't open that just now. Is Google Chrome installed?"
                     asked = act.answers or {}
                     log.info("browser action url=%s script=%s", bool(act.url), bool(act.script))  # address not logged
-                    store.add_turn("user", text)
+                    store.add_turn("user", text, speaker)
                     store.add_turn("assistant", say)
+                    fid = trainer.record(text, say, speaker, replay_of)
                     await sock.send_json({"type": "reply", "text": say, "expression": act.expression,
-                                          "intensity": 0.3 if act.expression != "neutral" else 0.0})
+                                          "intensity": 0.3 if act.expression != "neutral" else 0.0,
+                                          **({"fid": fid} if fid else {})})
                     await sock.send_json({"type": "state", "state": "idle"})
                     continue
                 fact = parse_remember(text)
@@ -1042,9 +1500,29 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 await sock.send_json({"type": "state", "state": "thinking"})
                 if (q := curiosity.take_answer(speaker, text)):   # the owner answered my question → reviewed later
                     curiosity.queue_answer(q, text)
-                ask = curiosity.maybe_ask(speaker, text)
+                not_done = browser.wants_action(text) and not tools.urls_in(text)   # "open/play …" but no command matched
+                if not_done:
+                    hush()
+                ask = (None if time.time() < quiet["until"] and not ASK_ME.search(text)   # not right after a command
+                       else curiosity.maybe_ask(speaker, text))
                 qvec = await asyncio.to_thread(embedder.query, text) if embedder else None   # ~15 ms
-                messages = build_messages(text, speaker, qvec, curiosity_hint(ask) if ask else "")
+                cand, check_voice = voice["candidate"], False
+                if (speaker == "unknown" and cand and time.time() - cand["at"] < 60 and not ask and not not_done
+                        and time.time() - voice["asked_at"] >= ASK_EVERY_S and not trainer.busy):
+                    check_voice = True
+                messages = build_messages(text, speaker, qvec, browser.NOT_DONE if not_done else
+                                          (curiosity_hint(ask) if ask else
+                                           (voice_ask(cfg.owner_name) if check_voice else "")))
+                # core/tools.py: on web questions Echo may read pages himself (addresses the owner gave only)
+                turn = None
+                tset = permissions.load_settings(tools_cfg)
+                if tools_on and tset["enabled"] and hasattr(backend, "chat_stream_tools") and tools.wants_tools(text):
+                    turn = tools.Turn(research=tools.wants_research(text), follow=tset["follow_links"],
+                                      max_pages=tset["max_pages"])
+                    turn.allow(text, *[t["content"] for t in store.recent_turns(6)])
+                    messages[-1]["content"] += "\n\n" + tools.HINT
+                    if turn.research and tset["follow_links"] != "never":
+                        messages[-1]["content"] += "\n" + tools.RESEARCH_HINT.format(n=tset["max_pages"])
                 try:
                     # their name only now and then: allowed if none of the last 5 replies used it
                     recent = [t["content"] for t in store.recent_turns(10) if t["role"] == "assistant"][-5:]
@@ -1053,7 +1531,9 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                                           name=name)
                     parser.ask(text)   # "blink for me" / "smile for me" happen even if the model forgets
                     t_start, t_first = time.perf_counter(), None
-                    async for piece in backend.chat_stream(messages):
+                    words = (tools.stream_with_tools(backend, messages, turn, prefetch=tools.prefetch_calls(text)) if turn
+                             else backend.chat_stream(messages))
+                    async for piece in words:
                         t_first = t_first or time.perf_counter()
                         delta = parser.feed(piece)
                         if delta:  # words go to the window (and the voice) as they are written
@@ -1068,16 +1548,27 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     await sock.send_json({"type": "error", "message": "My thinking engine isn't responding. Is Ollama running?"})
                     await sock.send_json({"type": "state", "state": "idle"})
                     continue
-                store.add_turn("user", text)
-                store.add_turn("assistant", reply.text)
+                store.add_turn("user", text, speaker, sent=messages[-1]["content"])   # as sent, for the next prompt
+                cited = ""
+                if turn and turn.sources:   # sources kept with the reply, so follow-up questions know the address
+                    seen = {s["url"]: s for s in turn.sources}.values()
+                    cited = "\n\nSources: " + "; ".join(f"{s['title']} ({s['url']})" for s in seen)
+                    await sock.send_json({"type": "sources", "sources": list(seen)})
+                store.add_turn("assistant", reply.text + cited)
                 last_turn["at"] = time.time()
+                if check_voice and "is that you" in reply.text.lower():   # asked: the next "yes" teaches my ears
+                    voice.update(check={"emb": cand["emb"], "at": time.time()}, asked_at=time.time(), candidate=None)
                 if ask and asked_in(reply.text, ask):   # he really asked it: wait for the owner's answer
                     curiosity.asked(ask)
                 st = getattr(backend, "last_stats", {})
-                log.info("turn ok expression=%s first_token_ms=%d prompt_tokens=%s prompt_ms=%s reply_tokens=%s",
-                         reply.expression, round(((t_first or time.perf_counter()) - t_start) * 1000),
-                         st.get("prompt_tokens"), st.get("prompt_ms"), st.get("reply_tokens"))   # content never logged
-                await sock.send_json({"type": "reply", **reply.model_dump()})
+                log.info("turn ok expression=%s first_token_ms=%d prompt_tokens=%s prompt_ms=%s reply_tokens=%s "
+                         "thinking_chars=%s tools=%s", reply.expression, round(((t_first or time.perf_counter()) - t_start) * 1000),
+                         st.get("prompt_tokens"), st.get("prompt_ms"), st.get("reply_tokens"),
+                         st.get("thinking_chars", 0), [c["name"] + (":ok" if c["ok"] else ":no") for c in turn.calls]
+                         if turn else "-")   # content never logged
+                fid = trainer.record(text, reply.text, speaker, replay_of)   # testing on: logged for 👍/👎
+                await sock.send_json({"type": "reply", **reply.model_dump(), **({"fid": fid} if fid else {}),
+                                      **({"replay_of": replay_of} if replay_of else {})})
                 await sock.send_json({"type": "state", "state": "idle"})
         except WebSocketDisconnect:
             pass
