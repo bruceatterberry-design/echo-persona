@@ -66,7 +66,7 @@ are more) + the 3 latest notes; then up to 2 extra memories matching the message
 ```
                          ┌──────────────── conversation (core/server.py) ───────────────────┐
   message ─► subject     │  L3 context pack (≤ 1,500 tokens, always loaded)                   │
-             extraction ─┤  + retrieved L2 symbols (top 5–8, with sources)                    │──► LLM (llama3.1:8b)
+             extraction ─┤  + retrieved L2 symbols (top 5–8, with sources)                    │──► LLM (qwen3.5:9b)
              (entities,  │  + L1 quotes when exact words matter                               │
               time, kind)└───────────────────────────────▲───────────────────────────────────┘
                                                          │ Retrieval engine (section 4)
@@ -363,7 +363,7 @@ Embedding: nomic ~15 ms per query, batches much faster per item.
 | Vectors ≤ 100k | numpy brute force (now) · sqlite-vec | **keep numpy** | measured 4.6 ms at 100k |
 | Vectors > 100k | usearch · FAISS (measured) · hnswlib · LanceDB · sqlite-vec | **FAISS IVF-PQ + int8 re-check** (measured 2M: 97 %, 1.7 ms, 221 MB RAM; usearch HNSW only 59–70 % on clustered data) | a rebuildable cache, not the record; add when Echo passes ~100k memories (the owner to approve faiss-cpu) |
 | Embeddings | nomic-embed-text (now) · bge-small · mxbai | **keep nomic** | already installed; Matryoshka 256-dim if v1.5 |
-| Extraction | llama3.1:8b (now) · optional Claude helper (exists, capped) | **keep, local first** | privacy; helper only for non-sensitive jobs, as now |
+| Extraction | qwen3.5:9b (now) · optional Claude helper (exists, capped) | **keep, local first** | privacy; helper only for non-sensitive jobs, as now |
 | Archive compression | zstd · gzip | **zstd** (text archives only) | fast, good ratio; media stored as-is |
 | Backups | current scripts + Time Machine · restic | **current + add restic later?** (the owner to decide) | restic = encrypted, deduplicated, incremental; one more tool to look after |
 

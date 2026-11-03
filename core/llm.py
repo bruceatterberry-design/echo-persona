@@ -110,8 +110,31 @@ class OllamaBackend:
                                        "rounds": prev.get("rounds", 0) + 1}
                     break
 
+    def exact_prefix(self, messages: list[Message]) -> str | None:
+        """The conversation so far exactly as Ollama renders it for qwen3.5 with thinking off — every message up to,
+        not including, the next user message — or None for other models/settings.
+
+        Why (measured 2026-11-03, real model, copy of memory): qwen3.5 can only resume from a saved point, and the old
+        warm-up ended with a stand-in "Hello." message, so the next real message had to re-read ~500 tokens: 2.5 s
+        before the first word even with no memory notes. Warming exactly up to the point where the next message
+        starts: 0.25 s (with notes 4.7 → 2.5 s). The real reply's prompt is unchanged; only the warm-up differs, so a
+        wrong rendering here could only cost speed, never change what Echo says. Checked against Ollama's own
+        rendering by prompt token count and by the resulting speed (tests/test_executive.py, scripts/eval_executive.py)."""
+        if not str(self.cfg.model).startswith("qwen3.5") or self.cfg.think is not False:
+            return None
+        if any(m.get("role") not in ("system", "user", "assistant") or m.get("images") or m.get("tool_calls")
+               for m in messages):
+            return None
+        return "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in messages)
+
     async def warm(self, messages: list[Message]) -> None:
-        """Read the prompt once (one token of output) so the first real reply can reuse it."""
+        """Read the prompt once (one token of output) so the first real reply can reuse it. `messages` ends with a
+        stand-in user message; with qwen3.5 only what comes before it is read, exactly (see exact_prefix)."""
+        if (prefix := self.exact_prefix(messages[:-1])) is not None:
+            await self.client.post("/api/generate", json={
+                "model": self.cfg.model, "raw": True, "prompt": prefix, "stream": False, "keep_alive": self.cfg.keep_alive,
+                "options": {"temperature": 0, **self.cfg.options, "num_predict": 1}})
+            return
         body = self._body(messages, stream=False)
         body["options"] = {**body["options"], "num_predict": 1}
         body["think"] = False if self.cfg.think is not None else None   # reading the prompt is enough
@@ -154,11 +177,27 @@ def _json_part(text: str) -> str:
     return text[a:b + 1] if a != -1 and b > a else text
 
 
+def _post(url: str, body: dict, timeout: float):
+    """httpx.post, except inside a background job (core/sched.py): then the request runs on Echo's event loop and is
+    cancelled the moment someone starts talking (Ollama stops it at once; the job retries later)."""
+    from core.sched import SCHED
+    SCHED.cache_used(SCHED.current_job() or "other")   # Phase 7: the conversation must be read again afterwards
+    if not SCHED.current_job() or SCHED.loop is None:
+        return httpx.post(url, timeout=timeout, json=body)
+
+    async def go():
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(url, json=body)
+            await r.aread()
+            return r
+    return SCHED.call(go)
+
+
 def chat_post(host: str, body: dict, timeout: float):
     """POST /api/chat for background jobs. Some models (qwen3.5 on Ollama's MLX engine) can't do Ollama's structured
     output ("format"); then the same request is sent without it, asking for JSON in words, and the JSON part of the
     reply is returned in its place. Same shape as httpx.post(...): call .raise_for_status(), then .json()."""
-    r = httpx.post(f"{host}/api/chat", timeout=timeout, json=body)
+    r = _post(f"{host}/api/chat", body, timeout)
     if getattr(r, "status_code", 200) < 400 or "format" not in body or "structured output" not in r.text:
         return r
     plain = {k: v for k, v in body.items() if k != "format"}
@@ -167,7 +206,7 @@ def chat_post(host: str, body: dict, timeout: float):
     msgs[-1]["content"] += ("\n\nAnswer with JSON only, nothing else." +
                             (f" It must match this JSON schema: {json.dumps(schema)}" if schema else ""))
     plain["messages"] = msgs
-    r = httpx.post(f"{host}/api/chat", timeout=timeout, json=plain)
+    r = _post(f"{host}/api/chat", plain, timeout)
     r.raise_for_status()
     data = r.json()
     data["message"]["content"] = _json_part(data["message"].get("content", ""))

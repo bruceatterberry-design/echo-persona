@@ -134,7 +134,7 @@ def similar(a: str, b: str) -> bool:
     return len(wa & wb) / max(1, min(len(wa), len(wb))) > 0.6
 
 
-def build(dataset: Path, out_dir: Path, host: str = "http://127.0.0.1:11434", model: str = "llama3.1:8b",
+def build(dataset: Path, out_dir: Path, host: str = "http://127.0.0.1:11434", model: str = "qwen3.5:9b-q4_K_M",
           progress=lambda m: None, incremental: bool = True, helper=None) -> dict:
     """Analyze recordings into traits/facts. With an existing draft and incremental=True, only recordings not seen before
     are analyzed, and everything the owner decided (approved/rejected, edited wording, saved facts, summary) is kept."""
@@ -319,7 +319,7 @@ def _condense_group(host: str, model: str, cat: str, items: dict, most: int, hel
     return out[:most]
 
 
-def condense(draft: dict, host: str = "http://127.0.0.1:11434", model: str = "llama3.1:8b", helper=None) -> list[dict]:
+def condense(draft: dict, host: str = "http://127.0.0.1:11434", model: str = "qwen3.5:9b-q4_K_M", helper=None) -> list[dict]:
     """Merge the owner's approved traits into a short list, one category at a time so every kind of trait is kept
     (1–3 lines per category). Only combines what they approved; each line lists the trait ids it came from."""
     approved = [t for t in draft["traits"] if t["status"] == "approved"]

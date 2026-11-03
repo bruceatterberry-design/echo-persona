@@ -32,7 +32,7 @@ def stream(text):
 
 def busy_llm():
     c = http.client.HTTPConnection("127.0.0.1", 11434, timeout=120)
-    c.request("POST", "/api/generate", json.dumps({"model": "llama3.1:8b", "stream": False, "keep_alive": "24h",
+    c.request("POST", "/api/generate", json.dumps({"model": "qwen3.5:9b-q4_K_M", "think": False, "stream": False, "keep_alive": "24h",
               "prompt": "Tell me about a nice afternoon on the porch.", "options": {"num_predict": 80}}))
     c.getresponse().read(); c.close()
 

@@ -393,6 +393,7 @@ class Trainer:
         if not act:
             return "I don't have any lessons to undo."
         act[-1]["active"] = False
+        act[-1]["dropped"] = time.strftime("%Y-%m-%d %H:%M")   # CA 2.0 Phase 8: change history keeps when
         self._save_lessons(items)
         return f"Okay, I've dropped my last lesson: \"{act[-1]['text']}\""
 

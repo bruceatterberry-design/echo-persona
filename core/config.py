@@ -1,10 +1,11 @@
 """Configuration loading. Real configs live in config/*.yaml (gitignored)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -12,12 +13,25 @@ ROOT = Path(__file__).resolve().parent.parent
 class LLMConfig(BaseModel):
     backend: str = "ollama"  # "ollama" | "echo"
     host: str = "http://127.0.0.1:11434"
-    model: str = "llama3.1:8b"
-    temperature: float = Field(0.7, ge=0.0, le=2.0)
+    # 1.0.0: Qwen 3.5 9B replaced Llama 3.1 8B as the default (fewer made-up details, follows the conversation better;
+    # measured in docs/BENCHMARKS.md). To go back: model: llama3.1:8b and temperature: 0.7 in config/echo.yaml.
+    model: str = "qwen3.5:9b-q4_K_M"
+    temperature: float = Field(0.4, ge=0.0, le=2.0)
     timeout_s: float = 120.0
     keep_alive: str = "24h"  # keep the model in memory so a reply after a quiet spell isn't slow
     think: bool | None = None   # thinking models (qwen3.5): True/False; None = don't say (other models)
     options: dict[str, float | int] = Field(default_factory=dict)   # extra sampling settings: top_p, top_k, min_p, …
+
+    @model_validator(mode="after")
+    def _qwen_defaults(self):
+        """Qwen 3.5 thinks for minutes before its first word unless told not to, and wants its own sampling settings.
+        Applied only when nothing was set, so any choice in config/echo.yaml wins."""
+        if str(self.model).startswith("qwen3.5"):
+            if self.think is None:
+                self.think = False
+            if not self.options:
+                self.options = {"top_p": 0.8, "top_k": 20, "min_p": 0, "presence_penalty": 1.5}
+        return self
 
 
 class ServerConfig(BaseModel):
@@ -60,10 +74,11 @@ class PersonaConfig(BaseModel):
 
 def load_config(path: str | Path | None = None) -> PersonaConfig:
     path = Path(path) if path else ROOT / "config" / "echo.yaml"
-    if not path.exists():
-        return PersonaConfig()
-    data = yaml.safe_load(path.read_text()) or {}
-    return PersonaConfig.model_validate(data)
+    data = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+    cfg = PersonaConfig.model_validate(data)
+    if (m := os.environ.get("ECHO_LLM_MODEL")):   # benchmarks only: try another model without editing echo.yaml
+        cfg.llm.model = m
+    return cfg
 
 
 def load_personality(cfg: PersonaConfig) -> str:

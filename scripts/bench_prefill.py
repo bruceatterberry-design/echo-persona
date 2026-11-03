@@ -4,7 +4,7 @@ words = ("the quiet morning light falls across the porch while the coffee cools 
 rates = []
 for i in range(3):
     prompt = f"[{random.random()}] " + " ".join(words[:1100]) + "\nSay OK."
-    r = httpx.post("http://127.0.0.1:11434/api/generate", json={"model": "llama3.1:8b", "prompt": prompt, "stream": False,
+    r = httpx.post("http://127.0.0.1:11434/api/generate", json={"model": "qwen3.5:9b-q4_K_M", "think": False, "prompt": prompt, "stream": False,
                    "options": {"num_predict": 2}, "keep_alive": "24h"}, timeout=300).json()
     rates.append(r["prompt_eval_count"] / (r["prompt_eval_duration"] / 1e9))
     print(f"  {r['prompt_eval_count']} tokens read in {r['prompt_eval_duration']/1e9:.2f}s = {rates[-1]:.0f} tokens/s")

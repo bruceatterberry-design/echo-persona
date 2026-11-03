@@ -108,11 +108,11 @@ def test_play_uses_the_configured_account(monkeypatch):
 def test_play_opens_top_video(monkeypatch):
     from core import browser
     opened = []
-    monkeypatch.setattr(browser, "youtube_top", lambda q: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
     monkeypatch.setattr(browser.subprocess, "run", lambda args, **k: opened.append(args[-1]))
     assert browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
     assert opened == ["https://www.youtube.com/watch?v=aQnW-MxAU6U"]
-    monkeypatch.setattr(browser, "youtube_top", lambda q: None)                    # lookup failed → search page
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: None)                    # lookup failed → search page
     browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
     assert "results?search_query=steely+dan" in opened[-1]
 
@@ -136,3 +136,46 @@ def test_unrecognised_requests_are_flagged_but_talk_is_not():
     assert browser.wants_action("play the radio", [])
     for t in ("open up about your day", "listen to me", "open the window", "I love you", "can we listen to that again"):
         assert not browser.wants_action(t, []), t
+
+
+def test_requests_from_the_cat_video_test_log():
+    """the owner's 👎 entries from data/training.sqlite, 2026-10-31."""
+    from core import browser
+    A = ["steely dan", "blues"]
+    for text, want, video in [
+        ("Play a cat video echo", "cat video", True),
+        ("YouTube is open in a browser window. Please play cat videos.", "cat videos", True),
+        ("Open YouTube and open the cat videos.", "the cat videos", True),
+        ("Can you do me a favor and please open YouTube and play a random cat video?", "cat video", True),
+        ("Can you look up some cat videos, like I asked earlier?", "cat videos", True),
+        ("Hey Echo, open YouTube and play some Steely Dan", "steely dan", False)]:
+        a = browser.parse_play(text, None, A)
+        assert a and a.play == want and a.video == video, text
+    assert browser.parse_play("Can you do me a favor and please open YouTube and play a random cat video?", None, A).random
+    for t in ("look up the history of Epcot", "Open YouTube.", "play a game with me", "the owner's Youtube."):
+        assert browser.parse_play(t, None, A) is None, t
+    assert browser.wants_action("Can you do me a favor and please open the radio app?", A)   # mid-sentence: still flagged
+
+
+def test_a_video_plays_without_listening_along(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from core import browser, music
+    from core.config import PersonaConfig
+    from core.llm import EchoBackend
+    from core.server import create_app
+    from memory.store import MemoryStore
+    picked = []
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: picked.append((q, r)) or "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(music, "listen", lambda *a, **k: pytest.fail("videos are not listened along to"))
+    monkeypatch.setattr(music, "fetch_info", lambda vid: music.Info(id=vid, url="u", title="Funny cats", duration=0.1))
+    client = TestClient(create_app(PersonaConfig(), EchoBackend(), MemoryStore(tmp_path / "m.sqlite")))
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"text": "Can you do me a favor and please open YouTube and play a random cat video?"})
+        assert ws.receive_json() == {"type": "music", "url": "https://www.youtube.com/watch?v=aQnW-MxAU6U", "vid": "aQnW-MxAU6U"}
+        r = ws.receive_json()
+        assert r["type"] == "reply" and r["text"] == "Okay, finding a cat video on YouTube."
+        m = ws.receive_json()
+        while m["type"] != "music_stop":                     # the video ends: window closed, mic back on, no comment
+            m = ws.receive_json()
+    assert picked == [("cat video", True)]

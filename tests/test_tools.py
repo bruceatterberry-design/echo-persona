@@ -254,3 +254,37 @@ def test_settings_file_is_validated(tmp_path):
     p.write_text('{"follow_links": "everywhere", "max_pages": 99, "extra": 1}')
     s = permissions.load_settings(p)
     assert s["follow_links"] == "same_site" and s["max_pages"] == 8 and "extra" not in s
+
+
+def test_link_pick_shadow_records_agreement(fake_page):
+    """Stage 6b: after page_links, the shortcut's pick (by the user's words) is compared with the page the model reads."""
+    from core import skills
+    fake_page["https://a.org/"] = ("Index", "front", [("Bass fishing basics", "https://a.org/bass"),
+                                                      ("Crappie: a panfish", "https://a.org/crappie"),
+                                                      ("Contact us", "https://a.org/contact")])
+    fake_page["https://a.org/crappie"] = ("Crappie", "Crappie are panfish of the genus Pomoxis.", [])
+    fake_page["https://a.org/bass"] = ("Bass", "Bass text.", [])
+    q = "Start at https://a.org and follow the links to the article about crappie"
+    assert skills.pick_link(q, [web.Link("Bass fishing basics", "https://a.org/bass"),
+                                web.Link("Crappie: a panfish", "https://a.org/crappie")]).url.endswith("crappie")
+    for chosen, agree in (("https://a.org/crappie", True), ("https://a.org/bass", False)):
+        t = tools.Turn(research=True)
+        t.allow(q)
+        t.question = q
+        tools.page_links({"url": "https://a.org/", "about": "fish"}, t)
+        tools.read_webpage({"url": chosen, "question": "genus"}, t)
+        assert t.shadow and t.shadow[0]["agree"] is agree and t.shadow[0]["decision_ms"] >= 0
+        assert t.shadow[0]["model_rank"] == (1 if agree else None)
+    t2 = tools.Turn()
+    t2.allow("https://a.org/crappie")
+    tools.read_webpage({"url": "https://a.org/crappie"}, t2)     # no page_links first → nothing to compare
+    assert t2.shadow == []
+
+
+def test_rank_links_ignores_filler_words():
+    from core import skills
+    links = [web.Link("Please read this page", "https://x.org/p"), web.Link("Individuals with Disabilities Education Act",
+                                                                           "https://x.org/IDEA")]
+    assert skills.pick_link("follow the links to the article about the Individuals with Disabilities Education Act",
+                            links).url.endswith("IDEA")
+    assert skills.pick_link("tell me about it", links) is None   # no real words in common → no pick

@@ -1,0 +1,17 @@
+{
+  "_help": "CA 2.0 Phase 10 long-term evaluation (core/longterm.py). Each measure stays dormant until it has the minimum data below; its first full window then becomes this computer's baseline, and later windows are compared with it ('watch' + reason when worse). Runs once a day in quiet time, no model call, nothing leaves this computer. Set enabled to false to turn it off. Status: GET /api/longterm.",
+  "enabled": true,
+  "every_hours": 24,
+  "window_days": 7,
+  "min": {
+    "first_word_replies": 50,
+    "first_word_days": 3,
+    "notes_turns": 100,
+    "questions_asked": 10
+  },
+  "watch": {
+    "first_word_p90_ratio": 1.3,
+    "first_word_p90_min_ms": 1000,
+    "answer_rate_below": 0.3
+  }
+}

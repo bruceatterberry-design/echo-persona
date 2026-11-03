@@ -24,7 +24,7 @@ an Android phone for collection. No cloud services at runtime.
           │ /api/chat (stream)          │ /stream (PCM)                │ adb over USB
    ┌──────▼─────────┐         ┌─────────▼──────────────┐       ┌───────▼──────────────────────────────┐
    │ Ollama          │         │ Voice service           │       │ Echo Persona Collector (Android, no internet)│
-   │ llama3.1:8b     │         │ Qwen3-TTS 0.6B (MLX)    │       │ guided sessions: face video, photos,    │
+   │ qwen3.5:9b      │         │ Qwen3-TTS 0.6B (MLX)    │       │ guided sessions: face video, photos,    │
    │ 127.0.0.1:11434 │         │ ref: the owner's 6.2 s clip │       │ read-aloud WAV, own-words answers;      │
    │ keep-alive 24 h │         │ 127.0.0.1:8766          │       │ checksums, receipts, reminders          │
    └─────────────────┘         └─────────────────────────┘       └─────────────────────────────────────────┘

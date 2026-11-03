@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import os
 import threading
 import time
 from pathlib import Path
@@ -36,11 +37,23 @@ class SpeakerID:
     def available(self) -> bool:
         return self.model.exists()
 
+    # CPU on purpose (measured 2026-11-02): sherpa-onnx's Core ML option is 6.6× faster with identical voice prints
+    # (cosine 0.99999), but macOS ran it on the GPU (60% busy vs 0% on CPU), where it would compete with the LLM and
+    # the voice. The CPU path doesn't touch the GPU. ECHO_SPEAKER_PROVIDER=coreml to use it anyway.
+    provider = os.environ.get("ECHO_SPEAKER_PROVIDER", "cpu")
+
     def _extractor(self):
+        """The configured provider first, then the CPU if it can't start."""
         if self._ex is None:
             import sherpa_onnx
-            cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(self.model), num_threads=1, provider="cpu")
-            self._ex = sherpa_onnx.SpeakerEmbeddingExtractor(cfg)
+            for prov in dict.fromkeys([self.provider, "cpu"]):
+                try:
+                    cfg = sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=str(self.model), num_threads=1, provider=prov)
+                    self._ex = sherpa_onnx.SpeakerEmbeddingExtractor(cfg)
+                    self.provider_used = prov
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
         return self._ex
 
     def embed(self, audio: np.ndarray) -> np.ndarray:

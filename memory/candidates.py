@@ -28,7 +28,7 @@ For each note give:
 - memory: the note
 - when: when it happened, in their words ("summer of 1974", "when I was eight"), or "" if they didn't say
 - year: a 4-digit year only if they said it, else 0
-- people: names or relations involved ("Dad, my brother Tom"), or ""
+- people: names or relations involved ("my brother Tom, Grandma"), or ""
 - place: where it happened, or ""
 - period: one of childhood (under 13), teen, young_adult (about 18-30), adult, recent (the last year or two), unknown
 - quote: 5 to 25 of their exact words, copied from the transcript, that show this memory
@@ -68,8 +68,27 @@ def grounded(items: list[dict], transcript: str, default_period: str | None = No
     return out
 
 
+LOVED_ONE_SWAPS = [("Below is the owner telling a memory", "Below is the loved one (the person the owner lives with), telling a memory"),
+              ("The question he was answering", "The question she was answering"),
+              ('a short note in the owner\'s own voice ("I ...")', 'a short note about the loved one in the third person ("the loved one ...")'),
+              ("names, places and years he mentions", "names, places and years she mentions"),
+              ("Only what he actually said: no guesses, no feelings he didn't express",
+               "Only what she actually said: no guesses, no feelings she didn't express"),
+              ("fact about his life", "fact about her life"), ("in his words", "in her words"),
+              ("if he didn't say", "if she didn't say"), ("only if he said it", "only if she said it"),
+              ("of his exact words", "of her exact words"), ("something he said", "something she said")]
+
+
+def for_teller(prompt: str, teller: str) -> str:
+    """the loved one's stories (told to Echo in conversation) are kept about the loved one, in the third person, never as the owner's "I"."""
+    if teller == "loved_one":
+        for a, b in LOVED_ONE_SWAPS:
+            prompt = prompt.replace(a, b)
+    return prompt
+
+
 def extract(transcript: str, question: str, host: str, model: str, default_period: str | None = None,
-            timeout: float = 300) -> list[dict]:
+            timeout: float = 300, teller: str = "owner") -> list[dict]:
     """Ask the local model for memory notes in a transcript. Returns grounded suggestions ([] if nothing/failed)."""
     if len(transcript.split()) < 12:
         return []
@@ -78,7 +97,8 @@ def extract(transcript: str, question: str, host: str, model: str, default_perio
         "model": model, "stream": False, "keep_alive": "24h", "format": SCHEMA,
         # a bigger context only for long stories: changing it makes Ollama reload the model (slow next reply)
         "options": {"temperature": 0.1, "num_predict": 1200, **({"num_ctx": 8192} if len(transcript) > 6000 else {})},
-        "messages": [{"role": "user", "content": PROMPT.format(question=question or "(none)", transcript=transcript[:12000])}]})
+        "messages": [{"role": "user", "content": for_teller(PROMPT, teller).format(question=question or "(none)",
+                                                                                 transcript=transcript[:12000])}]})
     r.raise_for_status()
     items = json.loads(r.json()["message"]["content"]).get("memories", [])
     return grounded(items, transcript, default_period)
@@ -88,7 +108,8 @@ def suggest(store: MemoryStore, transcript: str, question: str, source: str, hos
             default_period: str | None = None) -> int:
     """Extract and keep suggestions for one recording. Returns how many new suggestions were kept."""
     n = 0
-    for c in extract(transcript, question, host, model, default_period):
+    teller = "loved_one" if source.startswith("loved_one:") else "owner"
+    for c in extract(transcript, question, host, model, default_period, teller=teller):
         n += store.add_candidate(c | {"source": source, "question": question}) is not None
     return n
 

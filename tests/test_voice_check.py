@@ -110,15 +110,18 @@ def said(client, text, result, fake):
 def test_saying_your_name_gives_a_voice_sample(tmp_path, monkeypatch):
     fake = FakeSpeakers()
     monkeypatch.setattr(core.server, "SpeakerID", lambda *a, **k: fake)
-    client = TestClient(create_app(PersonaConfig(owner_name="Pat", loved_one_name="Sam"), EchoBackend(), MemoryStore(tmp_path / "m.sqlite"), stt=FakeSTT()))
-    said(client, "This is Pat.", {"scores": {"owner": 0.41, "loved_one": 0.30}, "best": "owner"}, fake)
-    assert fake.added == [("owner", "said")]
-    said(client, "Hi Echo, it's Sam", {"scores": {"owner": 0.30, "loved_one": 0.45}, "best": "loved_one"}, fake)
-    assert fake.added[-1] == ("loved_one", "said")
-    said(client, "This is Pat", {"speaker": "loved_one", "scores": {"owner": 0.40, "loved_one": 0.85}, "best": "loved_one"}, fake)
-    assert len(fake.added) == 2                                                    # clearly the loved one joking: no sample
-    said(client, "It's Pat's birthday", {"scores": {"owner": 0.41, "loved_one": 0.30}}, fake)
-    assert len(fake.added) == 2
+    # one persistent client (one event loop) for the HTTP call and the WebSockets: separate short-lived loops
+    # occasionally lost a message between them (a test-client race, about 1 run in 5 under load)
+    with TestClient(create_app(PersonaConfig(owner_name="Pat", loved_one_name="Sam"), EchoBackend(),
+                               MemoryStore(tmp_path / "m.sqlite"), stt=FakeSTT())) as client:
+        said(client, "This is Pat.", {"scores": {"owner": 0.41, "loved_one": 0.30}, "best": "owner"}, fake)
+        assert fake.added == [("owner", "said")]
+        said(client, "Hi Echo, it's Sam", {"scores": {"owner": 0.30, "loved_one": 0.45}, "best": "loved_one"}, fake)
+        assert fake.added[-1] == ("loved_one", "said")
+        said(client, "This is Pat", {"speaker": "loved_one", "scores": {"owner": 0.40, "loved_one": 0.85}, "best": "loved_one"}, fake)
+        assert len(fake.added) == 2                                                # clearly the loved one joking: no sample
+        said(client, "It's Pat's birthday", {"scores": {"owner": 0.41, "loved_one": 0.30}}, fake)
+        assert len(fake.added) == 2
 
 
 def test_typed_name_gives_no_sample(tmp_path, monkeypatch):
@@ -131,3 +134,50 @@ def test_typed_name_gives_no_sample(tmp_path, monkeypatch):
         while ws.receive_json()["type"] != "reply":
             pass
     assert fake.added == []
+
+
+def test_after_yes_echo_remembers_and_stops_asking(tmp_path, monkeypatch):
+    """the owner, 2026-10-31: don't ask "Is that you?" again and again once I've said yes."""
+    fake = FakeSpeakers()
+    monkeypatch.setattr(core.server, "SpeakerID", lambda *a, **k: fake)
+    store = MemoryStore(tmp_path / "m.sqlite")
+    client = TestClient(create_app(PersonaConfig(), EchoBackend(), store, stt=FakeSTT()))
+
+    def reply(ws, text):
+        ws.send_json({"text": text, "speaker": "unknown"})
+        r = ws.receive_json()
+        while r["type"] != "reply":
+            r = ws.receive_json()
+        return r["text"]
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        client.post("/api/stt?mode=direct", content=wav())
+        assert "Is that you" in reply(ws, "what a lovely evening")
+        assert reply(ws, "Yes, it is.") == "Thanks. I'll know your voice better now."   # no owner name set
+        for line in ("tell me about the lake", "and the fishing?", "thanks"):
+            client.post("/api/stt?mode=direct", content=wav())      # still an unclear voice each time
+            assert "Is that you" not in reply(ws, line)
+    who = [r[0] for r in store.db.execute("SELECT speaker FROM turns WHERE role='user' ORDER BY id")]
+    assert who[-3:] == ["owner", "owner", "owner"]                    # unclear phrases count as the owner now
+
+
+def test_a_clearly_different_voice_takes_over(tmp_path, monkeypatch):
+    fake = FakeSpeakers()
+    monkeypatch.setattr(core.server, "SpeakerID", lambda *a, **k: fake)
+    store = MemoryStore(tmp_path / "m.sqlite")
+    client = TestClient(create_app(PersonaConfig(), EchoBackend(), store, stt=FakeSTT()))
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        for text, spk in (("hello", "owner"), ("hi there", "loved_one"), ("how are you", "unknown")):
+            ws.send_json({"text": text, "speaker": spk})
+            while ws.receive_json()["type"] != "reply":
+                pass
+    who = [r[0] for r in store.db.execute("SELECT speaker FROM turns WHERE role='user' ORDER BY id")]
+    assert who == ["owner", "loved_one", "loved_one"]                          # the unclear one stays with the newest voice
+
+
+def test_old_identity_questions_hidden_from_the_model():
+    from core.server import scrub_identity
+    assert scrub_identity("That's lovely. Is that you, the owner?") == "That's lovely."
+    assert scrub_identity("Am I talking with the owner or the loved one? Hope you're well.") == "Hope you're well."
+    assert scrub_identity("Is that a new song? I like it.") == "Is that a new song? I like it."

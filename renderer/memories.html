@@ -34,7 +34,7 @@
 </head>
 <body>
 <header><h1>MY MEMORIES</h1>
-  <span class="tab on" id="tabReview">To review</span><span class="tab" id="tabLife">My life story</span><span class="tab" id="tabLearn">Learn</span></header>
+  <span class="tab on" id="tabReview">To review</span><span class="tab" id="tabLife">My life story</span><span class="tab" id="tabLearn">Learn</span><span class="tab" id="tabWant">I’d like to learn</span></header>
 <main id="main"></main>
 <script>
 const $ = id => document.getElementById(id);
@@ -131,9 +131,49 @@ async function learn() {
       `${j.kind === 'web' ? j.source : 'file: ' + j.source} · ${new Date(j.created * 1000).toLocaleDateString()} · ${state}` }), el('div', { className: 'row' }, btn)));
   }
 }
-const tabs = { tabReview: review, tabLife: life, tabLearn: learn };
+async function want() {   // Stage 5b: things I noticed I didn't know (memory/gaps.py); nothing happens until you choose
+  const M = $('main'); M.innerHTML = '';
+  M.append(el('div', { className: 'hint', textContent: 'Questions I couldn\u2019t answer. You choose what I do: ask the owner (I\u2019ll ask them '
+    + 'when I hear their voice, and their answer comes back here to review), look it up from a web page you pick, or let it go.' }));
+  const items = (await (await fetch('/api/learning/objectives')).json()).objectives;
+  if (!items.length) M.append(el('div', { className: 'card hint', textContent: 'Nothing right now.' }));
+  const decide = async (id, decision, url, msg) => {
+    const r = await fetch('/api/learning/objectives/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ decision, url }) });
+    const j = await r.json();
+    if (r.ok) want(); else msg.textContent = j.detail || 'That didn\u2019t work.';
+  };
+  for (const o of items) {
+    const msg = el('span', { className: 'hint' });
+    const url = el('input', { placeholder: 'https://… a page to learn it from', style: 'flex:1;min-width:220px;display:none' });
+    const look = el('button', { textContent: 'Look it up', onclick: () => {
+      if (url.style.display === 'none') { url.style.display = ''; url.focus(); look.textContent = 'Learn from this page'; }
+      else decide(o.id, 'research', url.value.trim(), msg); } });
+    const ask = el('button', { className: o.suggested === 'ask_owner' ? 'ok' : '', textContent: 'Ask the owner', onclick: () => decide(o.id, 'ask_owner', '', msg) });
+    const drop = el('button', { className: 'no', textContent: 'Let it go', onclick: () => decide(o.id, 'dismiss', '', msg) });
+    M.append(el('div', { className: 'card' }, el('div', {}, '\u201c' + o.question + '\u201d'),
+      el('div', { className: 'hint', textContent: o.why + ' ' + o.gain }),
+      el('div', { className: 'row' }, ...(o.suggested === 'ask_owner' ? [ask, look] : [look, ask]), drop, url, msg)));
+  }
+  const OUT = { helped: 'it helped: I can answer it from memory now', not_yet: 'not in my memory yet',
+                not_helped: 'it didn\u2019t help: after two weeks I still can\u2019t answer it' };
+  const learned = [...(await (await fetch('/api/learning/objectives?status=done')).json()).objectives,
+                   ...(await (await fetch('/api/learning/objectives?status=research')).json()).objectives];
+  if (learned.length) {
+    M.append(el('h2', { textContent: 'What I\u2019ve learned (checked, not guessed)' }));
+    for (const o of learned) M.append(el('div', { className: 'card' }, el('div', {}, '\u201c' + o.question + '\u201d'),
+      el('div', { className: 'hint', textContent: o.outcome ? OUT[o.outcome] || o.outcome : 'checking soon' })));
+  }
+  const waiting = (await (await fetch('/api/learning/objectives?status=ask_owner')).json()).objectives;
+  if (waiting.length) {
+    M.append(el('h2', { textContent: 'Waiting to ask the owner' }));
+    for (const o of waiting) M.append(el('div', { className: 'card hint', textContent: '\u201c' + o.question + '\u201d' }));
+  }
+}
+const tabs = { tabReview: review, tabLife: life, tabLearn: learn, tabWant: want };
 for (const id in tabs) $(id).onclick = () => { for (const t in tabs) $(t).classList.toggle('on', t === id); tabs[id](); };
-review();
+const start = { '#life': 'tabLife', '#learn': 'tabLearn', '#want': 'tabWant' }[location.hash];   // memories.html#want opens a tab
+if (start) $(start).click(); else review();
 </script>
 </body>
 </html>

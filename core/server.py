@@ -23,12 +23,32 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from core import browser, music, permissions, tools, trainer as training
+from core import workspace as cws
+from core import controller
+from core import executive
+from core import people
+from core import development
+from core import initiative
+from core import longterm
+from core import skills
+from core import selfmodel
+from core import datecalc
+from memory import grounding
+from memory import gaps as mem_gaps
 from core.config import ROOT, PersonaConfig, load_config, load_personality
 from core.llm import LLMBackend, make_backend
+from core.sched import SCHED, Preempted
+from core.state import CognitiveState
+from core import focus
+from core import social
+from core import metacog
+from core import showphoto
 from core.schema import StreamParser
 from voice.stt import MAX_AUDIO_BYTES, MLXWhisperSTT, STTBackend, STTError, decode_audio, make_stt
 from face import expressions as face_expressions
 from face.library import FaceError, FaceLibrary
+from face.gphotos import GooglePhotos
+from memory.photos import OllamaDescriber, PhotoError, PhotoLibrary
 from transfer import phone_sync
 from processing import ingest
 from personality import build as persona
@@ -127,6 +147,31 @@ class FaceReviewIn(BaseModel):
     age_label: str | None = None
 
 
+class FacePickIn(BaseModel):
+    email: str = Field(max_length=200)
+    group: Literal["current", "younger"]
+    age: str = Field("unknown", max_length=10)
+
+
+class PhotoPatchIn(BaseModel):
+    status: str | None = None
+    caption: str | None = Field(None, max_length=500)
+    category: str | None = Field(None, max_length=30)
+
+
+class PhotoCategoryIn(BaseModel):
+    label: str = Field(max_length=40)
+
+
+class PhotoPickIn(BaseModel):
+    email: str = Field(max_length=200)
+    category: str = Field(max_length=30)
+
+
+class PhotoDescribeIn(BaseModel):
+    sha256: str | None = Field(None, max_length=64)
+
+
 class MemoryPatch(BaseModel):
     content: str | None = None
     kind: Kind | None = None
@@ -170,6 +215,11 @@ SYSTEM_EXTRA = (
     "\n\nI can play music on YouTube when asked like \"play Hotel California on YouTube\" or \"open YouTube and play "
     "some blues\"; that also happens before I answer. I never say I'm opening, playing or doing something unless it "
     "really happened: if such a request reaches me, it didn't, so I say I couldn't do it that way and suggest those words."
+    "\n\nI can show a photo from my photo memories on the screen when someone asks to see it (\"Can you show me the "
+    "picture?\"); that also happens before I answer. I may ask \"Would you like to see it?\" about a photo I remember, "
+    "but I never mention a photo gallery or album: there isn't one to open."
+    " Other than that I never offer to open, play or show something myself (\"Shall I open this link?\"), because a yes can't make it "
+    "happen; I tell them the words that work instead, like \"play a cat video on YouTube\"."
     "\n\nWhen someone talks to me out loud, their message may start with a note like [Recognised by voice: the owner "
     "is speaking]. I trust it, so I know who I'm talking with, but voice recognition can be wrong: if something "
     "important depends on who it is, I ask kindly. I never read these notes aloud."
@@ -192,6 +242,8 @@ def voice_ask(owner_name: str = "") -> str:
     q = f"Is that you, {owner_name}?" if owner_name else "Is that you?"
     return (f"[My voice check wasn't sure who this is, but it sounds most like the owner. I answer normally without using "
             f"a name, then END my reply with exactly: \"{q}\"]")
+OFFER_S = 180   # a "yes" counts for my offer this long
+PHOTO_S = 600   # "show me the picture" means the photo we talked about this recently
 
 
 def self_named(text: str, names: dict[str, str]) -> str | None:
@@ -207,6 +259,35 @@ def self_named(text: str, names: dict[str, str]) -> str | None:
     return None
 
 
+def _who_q() -> re.Pattern:
+    """My "who is this?" questions (names from this install's settings, core/people.py)."""
+    n = people.alternation()
+    return re.compile(r"\bis (?:that|this) (?:you|" + n + r")\b|\bam i (?:talking|speaking|chatting) (?:with|to)\b|"
+                      r"\b(?:" + n + r") or (?:" + n + r")\b|\bwho(?:'s| is| am i) (?:this|speaking|talking|here)\b", re.I)
+
+
+_ONE_TIME = re.compile(r"\s*\[(?:I'm the owner's digital self, and my memories|(?:the owner|the loved one) (?:just answered|told me more)|"
+                       r"Nothing was opened or played|My voice check wasn't sure|You can use tools in this message|"
+                       r"the owner asked you to research|My memory check|About me, checked facts|Date check|Social note|Memory check|"
+                       r"Correction check|Style note)[^\]]*\]")
+
+
+def strip_hints(sent: str) -> str:
+    """A past message without the one-time instructions that came with it ("END my reply by asking…", follow-up and
+    tool notes). They were kept in the history, so the model obeyed them again on every later turn (2026-10-31: it kept
+    asking "Tell me about a trip…" after the owner had answered). Memory notes and who-is-speaking stay."""
+    return _ONE_TIME.sub("", sent or "").rstrip()
+
+
+def scrub_identity(reply: str) -> str:
+    """My old reply without "Is that you, the owner?"-type questions: the model copied them onto later replies even right
+    after the owner said yes (2026-10-31). Only what the model sees changes; the stored conversation keeps everything."""
+    parts = re.split(r"(?<=[.?!])\s+", reply.strip())
+    who_q = _who_q()
+    keep = [p for p in parts if not (p.rstrip().endswith("?") and who_q.search(p))]
+    return " ".join(keep) if keep else reply
+
+
 VOICE_YES = re.compile(r"^\W*(?:yes|yeah|yep|yup|it'?s me|it is|that'?s me|sure is|of course)\b", re.I)
 
 
@@ -214,7 +295,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                store: MemoryStore | None = None, stt: STTBackend | None = None,
                studio: Studio | None = None, faces: FaceLibrary | None = None,
                conflict_judge: conflict_check.Judge | None = None, speakers: SpeakerID | None = None,
-               embedder: Embedder | None = None) -> FastAPI:
+               embedder: Embedder | None = None, photos: PhotoLibrary | None = None) -> FastAPI:
     cfg = cfg or load_config()
     speakers = speakers or SpeakerID(cfg.resolve(cfg.speaker_model), cfg.resolve(cfg.speakers_dir),
                                      cfg.speaker_threshold, cfg.speaker_margin)
@@ -235,18 +316,35 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     recall = Retriever(store, ents, embedder.model if embedder else None)   # memory/retrieve.py (Phase 3)
     pack = Pack(store, ents, recall)   # memory/context.py (Phase 5): what I always have in mind
     learner = Learner(store, cfg.resolve(cfg.dataset_root))   # memory/learn.py (Phase 7): documents and web pages
-    curiosity = Curiosity(store, cfg.ask_enabled, cfg.ask_every_minutes, cfg.ask_min_turns, answered=answered_on_phone)
+    # memory/gaps.py (Stage 5a/5b): what Echo noticed he doesn't know → proposed learning objectives, decided by the owner;
+    # approved "ask the owner" ones go to the front of curiosity's questions
+    learning = mem_gaps.Gaps(Path(store.path).parent / "learning.sqlite")
+    def learning_ask(question: str) -> tuple[str, list]:
+        """Stage 5c: what memory would give for this question now (same retrieval as a reply, k=3; no LLM)."""
+        qv = embedder.query(question) if embedder else None
+        res = recall.retrieve(question, qv, None, k=3)
+        g = grounding.label(res, controller.classify(question, known_names()).kind)
+        return g.label, [(h.memory.id, h.memory.created, grounding.hit_label(h).label) for h in res.hits]
+
+    curiosity = Curiosity(store, cfg.ask_enabled, cfg.ask_every_minutes, cfg.ask_min_turns, answered=answered_on_phone,
+                          extra=learning.approved_questions, photos=lambda: initiative.photo_questions(store))
 
     def check_conflicts_later(m: Memory, dup: bool) -> None:
         """New memory → look for contradictions in the background (the language model may be busy replying)."""
         if dup or m.kind == "summary":
             return
-        def run():
-            try:
-                if (n := conflict_check.check(store, m, conflict_judge)):
-                    log.info("memory %s: %d possible conflict(s) flagged for review", m.id, n)
-            except Exception as e:
-                log.warning("conflict check failed: %s", type(e).__name__)
+        def run():   # CA 2.0: waits until nobody is talking (it used to run right while Echo replied)
+            give_up = time.time() + 3600
+            while time.time() < give_up:
+                try:
+                    if (n := SCHED.in_thread("conflicts", conflict_check.check, store, m, conflict_judge)):
+                        log.info("memory %s: %d possible conflict(s) flagged for review", m.id, n)
+                    return
+                except Preempted:
+                    time.sleep(5)
+                except Exception as e:
+                    log.warning("conflict check failed: %s", type(e).__name__)
+                    return
         threading.Thread(target=run, daemon=True, name="memory-conflicts").start()
     lessons_path = Path(store.path).parent / "lessons.json"   # core/trainer.py: rules learned in "Train Echo"
     prompt = {"text": load_personality(cfg) + SYSTEM_EXTRA + training.lessons_block(lessons_path)}   # reloaded when a personality version is restored or a lesson changes
@@ -258,6 +356,62 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     tools_cfg = ROOT / "config" / "tools.json"                # follow_links any|same_site|never, max_pages (core/permissions.py)
     tool_audit = permissions.Audit(Path(store.path).parent / "tool_audit.sqlite")   # beside the memory DB (tests: a temp dir)
     tools.AUDIT = tool_audit
+    # core/workspace.py (Stage 1a, observe only): one record per turn, no text, kept 30 days
+    wslog = cws.WorkspaceLog(Path(store.path).parent / "workspace.sqlite")
+    recall_info: dict = {}
+    # UCA2 Phase 2's NDAS shadow (core/attention.py) was retired in CA 2.0 Phase 7 (see core/executive.py)
+    # CA 2.0 Phase 10: long-term evaluation, dormant until each measure has enough data (config/longterm.json)
+    lterm = longterm.LongTerm(Path(store.path).parent / "longterm.sqlite", ROOT / "config" / "longterm.json")
+
+    def run_longterm() -> dict:
+        s = lterm.settings()
+        r = lterm.run(wslog.records(s["window_days"]), development.report(trainer.lessons(), conversation_turns()),
+                      curiosity.state(), store)
+        log.info("long-term evaluation: %s", {k: v["state"] for k, v in r.items()})   # states only
+        return r
+    if cfg.owner_name or cfg.loved_one_name:   # names for every rule that needs one (core/people.py)
+        people.configure(cfg.owner_name, cfg.loved_one_name)
+
+    def people_names() -> list[str]:
+        return people.names()
+    keeper = executive.CacheKeeper()   # CA 2.0 Phase 7: records the model-cache state per turn and the re-reads
+
+    # 2026-11-02: what I last offered to open/play ("would you like to…"), for a "yes". One Echo, one conversation, so it's
+    # kept here, not per connection (the window reconnects; a relayed message is its own connection).
+    pending_offer: dict = {}
+    last_opened: dict = {}   # 2026-11-02: what I opened last in Chrome ({"host", "name", "at"}), for "close that"
+    last_photo: dict = {}    # 2026-11-03: the photo we were last talking about ({"sha", "at"}), for "show me the picture"
+    # CA 2.0 Phase 2: what I was in the middle of survives a restart (core/state.py), each item only while fresh
+    cstate = CognitiveState(Path(store.path).parent / "state.json")
+    if (r := cstate.restored_offer(browser.Action)):
+        pending_offer.update(act=r[0], at=r[1])
+    if (o := cstate.get("opened")):
+        last_opened.update(o)
+    if cstate.restored_from:
+        log.info("cognitive state restored from %s (offer %s, opened %s)", cstate.restored_from,
+                 "yes" if pending_offer else "no", "yes" if last_opened else "no")
+
+    def entity_names(ids) -> list[str]:
+        ids = [i for i in ids or [] if isinstance(i, int)][:12]
+        if not ids:
+            return []
+        try:
+            q = f"SELECT id, name FROM entities WHERE id IN ({','.join('?' * len(ids))})"
+            names = dict(store.db.execute(q, ids).fetchall())
+            return [names[i] for i in ids if i in names]
+        except Exception:  # noqa: BLE001
+            return []
+    known = {"names": frozenset(), "at": 0.0}   # entity names for core/controller.py, refreshed every 5 min
+
+    def known_names() -> frozenset:
+        if time.time() - known["at"] > 300:
+            try:
+                known["names"] = frozenset(e["name"].lower() for e in ents.list()   # people/pets/places only:
+                                               if e.get("name") and e.get("type") in ("person", "pet", "place"))
+            except Exception:  # noqa: BLE001
+                pass
+            known["at"] = time.time()
+        return known["names"]
     from core.claude_helper import ClaudeHelper   # optional: the owner's Claude account for background jobs (off by default)
     helper = ClaudeHelper(ROOT / "config" / "claude.json", ROOT / "data" / "claude-usage.json")
 
@@ -279,17 +433,35 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         except Exception as e:
             log.warning("stt warmup failed: %s", type(e).__name__)
 
+    def last_turn_row():
+        r = store.db.execute("SELECT id, ts FROM turns ORDER BY id DESC LIMIT 1").fetchone()
+        return (r["id"], r["ts"]) if r else (None, None)
+
+    async def reread(why: str) -> None:
+        """CA 2.0 Phase 7 (core/executive.py): read the instructions + conversation into the model's cache now, so the
+        next reply only reads what's new. A scheduler job like all background LLM work: someone talking stops it."""
+        if not hasattr(backend, "warm"):
+            return
+        tid, _ = last_turn_row()
+        t = time.perf_counter()
+        await SCHED.run("warm", backend.warm(build_messages("Hello.", warm_only=True)))
+        ms = (time.perf_counter() - t) * 1000
+        was = SCHED.cache_restored()
+        keeper.done(why, ms, tid)
+        log.info("conversation re-read (%s%s): %d ms", why, f"; model last used by {was['by']}" if was else "", round(ms))
+
     async def warm_llm():  # read Echo's instructions + recent conversation now, so the first reply is quick
         await asyncio.sleep(2)
         try:
-            if hasattr(backend, "warm"):
-                t = time.perf_counter()
-                await backend.warm(build_messages("Hello."))
-                log.info("llm warmup %d ms", round((time.perf_counter() - t) * 1000))
+            # (2026-11-02: a reply waited ~9 s behind this warm-up right after a restart: now it stops for a reply)
+            await reread("startup")
+        except Preempted:
+            log.info("llm warmup stopped: someone started talking")
         except Exception as e:
             log.warning("llm warmup failed: %s", type(e).__name__)
 
     last_turn = {"at": time.time()}
+    photo_cons: dict = {}   # index file time at the last photo consolidation
     originals = {"at": 0.0}   # last time finished days were archived and new originals catalogued
 
     def consolidate_due(now: float) -> bool:
@@ -331,6 +503,10 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         if c.get("added") or c.get("changed"):
             log.info("originals catalogued: %s", c)
 
+    def speech_seconds(text: str) -> float:
+        """Roughly how long the owner's voice takes to say this (measured 2026-11-02: ~17 characters per second)."""
+        return len(text or "") / 17 if cfg.voice and getattr(cfg.voice, "tts_url", None) else 0.0
+
     async def summarize_when_quiet():
         """Every 15 s: if nobody has spoken for 20 s, write notes for conversation that slid out of view, then re-read
         the (changed) instructions so the next reply is still quick."""
@@ -342,11 +518,42 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         log.info("memory vectors made: %d", n)
                 except Exception as e:
                     log.warning("memory vectors failed: %s", type(e).__name__)
-            if time.time() - last_turn["at"] < 20 or not hasattr(backend, "warm"):
+            if hasattr(stt, "release_idle_fallback"):   # Whisper fallback (2.3 GB) only while it's being used
+                try:
+                    await asyncio.to_thread(stt.release_idle_fallback)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("whisper unload failed: %s", type(e).__name__)
+            if time.time() - last_turn["at"] < 20 or not SCHED.quiet() or not hasattr(backend, "warm"):
                 continue
-            for a in curiosity.pop_answers():   # the owner's answers to my questions → suggestions on My memories
-                await asyncio.to_thread(suggest_memories, {"transcript": a["text"], "question": a["question"],
-                                                           "source": a["source"], "period": a["period"]})
+            try:
+                await quiet_jobs()
+                # CA 2.0 Phase 7: after a 30-minute break the window restarts → read the conversation now, once, so the
+                # next message doesn't wait for it (measured: memory questions 6–7 s → 3.2–3.8 s; core/executive.py)
+                tid, ts = last_turn_row()
+                if os.environ.get("ECHO_CACHE_KEEPER", "1") != "0" and (why := keeper.due(tid, ts)):
+                    await reread(why)
+            except Preempted:   # someone started talking (or work is paused): the rest waits for the next quiet pass
+                continue
+
+    async def quiet_jobs():
+        """Background work while nobody is talking (CA 2.0 Phase 2, core/sched.py): every language-model step runs as a
+        scheduler job, so it is cancelled the moment someone speaks and simply retried on a later pass."""
+        if True:
+            try:   # Stage 5c: did learning help? re-ask decided objectives against memory (no LLM; every 10 min each)
+                for chk in await asyncio.to_thread(mem_gaps.check_learning, learning, learning_ask):
+                    if chk["outcome"] != "not_yet":
+                        log.info("learning check: objective %d %s", chk["id"], chk["outcome"])
+            except Exception as e:  # noqa: BLE001
+                log.warning("learning check failed: %s", type(e).__name__)
+            answers = curiosity.pop_answers()   # the owner's answers to my questions → suggestions on My memories
+            for i, a in enumerate(answers):
+                try:
+                    await asyncio.to_thread(SCHED.in_thread, "suggestions", suggest_memories,
+                                            {"transcript": a["text"], "question": a["question"],
+                                             "source": a["source"], "period": a["period"]})
+                except Preempted:
+                    curiosity.requeue(answers[i:])   # not lost: done on the next quiet pass
+                    raise
             try:
                 if (n := archive.build_episodes(store)):
                     log.info("episodes made: %d", n)
@@ -356,25 +563,25 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             except Exception as e:
                 log.warning("originals upkeep failed: %s: %s", type(e).__name__, e)
             try:
-                n = await asyncio.to_thread(summarizer.summarize_pending, store, len(store.turns_window()),
-                                            cfg.llm.host, cfg.llm.model, 4, helper)
+                n = await asyncio.to_thread(SCHED.in_thread, "summaries", summarizer.summarize_pending, store,
+                                            len(store.turns_window()), cfg.llm.host, cfg.llm.model, 4, helper)
                 if n:
                     log.info("conversation notes saved: %d", n)   # the notes themselves are not logged
-                    await backend.warm(build_messages("Hello."))
+                    await reread("changed")
             except Exception as e:
                 log.warning("conversation notes failed: %s", type(e).__name__)
             if time.time() - last_turn["at"] < 20:
-                continue
+                return
             try:
                 if consolidate_due(time.time()):
-                    await asyncio.to_thread(run_consolidation)
+                    await asyncio.to_thread(SCHED.in_thread, "consolidation", run_consolidation)
             except Exception as e:
                 log.warning("memory upkeep failed: %s: %s", type(e).__name__, e)
             try:   # memories changed (new facts, "remember that", upkeep): refresh the pack now, while it's quiet, and
                 # read the new prompt once, so the next reply doesn't have to (~20 s on qwen3.5 after a change)
                 if pack.stale() and time.time() - last_turn["at"] >= 20:
                     pack.get(refresh=True)
-                    await backend.warm(build_messages("Hello."))
+                    await reread("changed")
                     log.info("context pack refreshed and read")
             except Exception as e:
                 log.warning("context pack refresh failed: %s", type(e).__name__)
@@ -383,14 +590,34 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     log.info("learning jobs finished: %d", n)
             except Exception as e:
                 log.warning("learning failed: %s", type(e).__name__)
-            try:   # people, places and facts from memories (~10 s each on the local model), 2 at a time
-                if (n := await asyncio.to_thread(ents.extract_pending, cfg.llm.host, cfg.llm.model, 2)):
+            try:   # people, places and facts from memories (~8 s each on the local model), ONE per pass and only if
+                # it's still quiet: two in a row kept the GPU busy ~16 s, long enough to collide with the next reply's voice
+                if time.time() - last_turn["at"] >= 20 and \
+                        (n := await asyncio.to_thread(SCHED.in_thread, "facts", ents.extract_pending, cfg.llm.host,
+                                                      cfg.llm.model, 1)):
                     log.info("memories read for people and facts: %d", n)
             except Exception as e:
                 log.warning("fact extraction failed: %s", type(e).__name__)
+            try:   # CA 2.0 Phase 10: long-term evaluation, at most once a day (no model call; dormant measures only count)
+                if lterm.due():
+                    await asyncio.to_thread(SCHED.in_thread, "longterm", run_longterm)
+            except Preempted:
+                raise
+            except Exception as e:  # noqa: BLE001
+                log.warning("long-term evaluation failed: %s", type(e).__name__)
+            try:   # CA 2.0 Phase 4: photo memories get camera dates, same-day links and the collection overview
+                ip = photos.index_path
+                if ip.exists() and ip.stat().st_mtime != photo_cons.get("mtime"):
+                    r = await asyncio.to_thread(SCHED.in_thread, "photo-memory", photos.consolidate)
+                    photo_cons["mtime"] = ip.stat().st_mtime
+                    if r.get("updated") or r.get("overview") in ("made", "updated"):
+                        log.info("photo memories consolidated: %s", r)
+            except Exception as e:  # noqa: BLE001
+                log.warning("photo consolidation failed: %s", type(e).__name__)
 
     @asynccontextmanager
     async def lifespan(_app):
+        SCHED.attach(asyncio.get_running_loop())   # background LLM calls run here, so they can be cancelled
         tasks = [asyncio.create_task(warm_stt()), asyncio.create_task(warm_llm()), asyncio.create_task(summarize_when_quiet())]
         yield
         for t in tasks:
@@ -399,6 +626,143 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     studio = studio or Studio(cfg.resolve(cfg.dataset_root))
     faces = faces or FaceLibrary(cfg.resolve(cfg.dataset_root))
     app = FastAPI(title="Echo Persona Core", lifespan=lifespan)
+    # DNS-rebinding guard (Stage 8, the owner OK'd 2026-11-01): a web page whose own domain is made to point at 127.0.0.1
+    # would otherwise talk to me as if it were this Mac. Only these names are answered (HTTP and WebSocket); everything
+    # here is reached as 127.0.0.1:8765 (scripts, Chrome window). Tailscale serves only the phone gateway (:8770).
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+
+    @app.get("/api/workspace/current")
+    def workspace_current():
+        """CA 2.0 Phase 3: the shared workspace right now — focus (state), carry-over from before a break, open items."""
+        carry, ids = focus.carryover(store)
+        cur = curiosity.pending()
+        return {"state": cstate.snapshot(), "carryover": {"turn_ids": ids, "lines": carry.count("\n- ") + (1 if carry else 0)},
+                "open": {"my_question": bool(cur), "offer": bool(pending_offer),
+                         "learning_objectives": len(learning.objectives("open"))},
+                "scheduler": SCHED.snapshot()["background"]}
+
+    @app.get("/api/state")
+    def cognitive_state():
+        """CA 2.0: what Echo is in the middle of (survives restarts). Ids and labels only."""
+        return cstate.snapshot()
+
+    @app.get("/api/executive")
+    def executive_state(days: int = 7):
+        """CA 2.0 Phase 7: what the executive decided and why (counts per module and reason), the model-cache re-reads,
+        and the wait for the first word by cache state at the start of the turn. Ids and rule names only."""
+        return {**executive.report(wslog.records(days)), "cache_keeper": keeper.snapshot(),
+                "cache_disturbed_by": (SCHED.cache_disturbed or {}).get("by"),
+                "retired": {"ndas": "CA 2.0 Phase 7 (D3): never changed a reply; 0 memories added over retrieval"}}
+
+    @app.get("/api/scheduler")
+    def scheduler_state():
+        """CA 2.0: what background work is doing and why it waits (conversation first)."""
+        return SCHED.snapshot()
+
+    @app.post("/api/scheduler")
+    def scheduler_set(body: dict):
+        """{"pause": true|false|null}: pause all background work now (null = follow config/scheduler.json)."""
+        p = body.get("pause")
+        if p not in (True, False, None):
+            raise HTTPException(400, "pause must be true, false or null")
+        SCHED.manual_pause = p
+        log.info("background work %s by the owner", {True: "paused", False: "resumed", None: "back to settings"}[p])
+        return SCHED.snapshot()
+
+    @app.get("/api/learning/objectives")
+    def learning_objectives(status: str = "open"):
+        """Stage 5a: gaps Echo noticed, as proposed learning objectives (nothing happens until the owner decides)."""
+        return {"objectives": learning.objectives(status), "stats": mem_gaps.learning_stats(learning)}
+
+    @app.post("/api/learning/objectives/{gid}")
+    async def learning_decide(gid: int, body: dict):
+        decision, note = str(body.get("decision", "")), str(body.get("note", ""))
+        if decision not in mem_gaps.DECISIONS:
+            raise HTTPException(400, f"decision must be one of {mem_gaps.DECISIONS}")
+        job = None
+        if decision == "research":   # only from a source the owner gives, through the safe reader (memory/learn.py)
+            url = str(body.get("url", "")).strip()
+            if not url:
+                raise HTTPException(400, "give a web address to learn this from")
+            try:
+                job = await asyncio.to_thread(learner.add_web, url, "")
+            except (ValueError, RuntimeError, httpx.HTTPError) as e:
+                raise HTTPException(400, str(e) or type(e).__name__)
+            note = f"learn job {job}: {url}"
+        if not learning.decide(gid, decision, "owner:panel", note):
+            raise HTTPException(404, "no such objective")
+        return {"ok": True, "job": job, "history": learning.history(gid)}
+
+    self_cache: dict = {"model": None, "at": 0.0}
+
+    async def current_self(max_age: float = 300) -> dict:
+        """The self-model, rebuilt at most every 5 minutes (Stage 7b uses it for questions about Echo himself)."""
+        if self_cache["model"] is None or time.time() - self_cache["at"] > max_age:
+            self_cache.update(model=await gather_self(), at=time.time())
+        return self_cache["model"]
+
+    @app.get("/api/self")
+    async def self_model():
+        """Stage 7a: Echo's self-model, built from the live system."""
+        return await current_self(max_age=0)
+
+    async def gather_self() -> dict:
+        f: dict = {"name": "Echo", "owner": cfg.owner_name or "the owner", "loved_one": cfg.loved_one_name or "my loved one"}
+        try:
+            f["personality_version"] = versions.current_id()
+            prof = persona.load_profile(pdir) or {}
+            f["traits"] = len(prof.get("traits") or [])
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            f["voice"] = (await tts_client.get("/health", timeout=1.5)).status_code == 200
+        except Exception:  # noqa: BLE001
+            f["voice"] = False
+        f["stt"] = stt_ready["ok"]
+        f["speakers"], f["speaker_names"] = bool(speakers.profiles), sorted(x.title() for x in speakers.profiles)
+        f["tools"] = bool(tools_on and permissions.load_settings(tools_cfg)["enabled"])
+        try:
+            f["browser_places"] = len(json.loads((ROOT / "config" / "browser.json").read_text()).get("shortcuts", []))
+            f["browser"] = True
+        except Exception:  # noqa: BLE001
+            f["browser"] = False
+        try:
+            mj = json.loads(music_list.read_text())
+            f["music"], f["music_genres"] = True, len(mj.get("approved_genres", []))
+        except Exception:  # noqa: BLE001
+            f["music"] = False
+        f["curiosity"], f["learning"], f["remember"] = bool(curiosity.enabled), True, True
+        f["helper"] = bool(helper.status().get("enabled"))
+        db = store.db
+        q = lambda sql: db.execute(sql).fetchone()[0]   # noqa: E731
+        f["memory"] = {"confirmed": q("SELECT count(*) FROM memories WHERE status='confirmed' AND hidden IS NULL AND kind!='knowledge'"),
+                       "inferred": q("SELECT count(*) FROM memories WHERE status='inferred' AND hidden IS NULL"),
+                       "life": q("SELECT count(*) FROM memories WHERE kind='memory' AND hidden IS NULL"),
+                       "learned": q("SELECT count(*) FROM memories WHERE kind='knowledge' AND hidden IS NULL")}
+        f["entities"] = q("SELECT count(*) FROM entities")
+        f["documents"] = q("SELECT count(*) FROM learn_jobs WHERE status='done'")
+        first, last, n = db.execute("SELECT min(ts), max(ts), count(*) FROM turns").fetchone()
+        day = lambda t: time.strftime("%Y-%m-%d", time.localtime(t)) if t else None   # noqa: E731
+        f["experience"] = {"turns": n, "episodes": q("SELECT count(*) FROM episodes"), "first": day(first), "latest": day(last)}
+        f["learning"] = mem_gaps.learning_stats(learning)
+        try:   # photos the owner approved (data drive); left out if the drive isn't there
+            ps = photos.summary()
+            labels = {c["id"]: c["label"] for c in ps["categories"]}
+            f["photos"] = {labels[c]: v["approved"] for c, v in ps["counts"].items() if v["approved"]}
+        except Exception:  # noqa: BLE001
+            pass
+        return selfmodel.build(f)
+
+    @app.get("/api/skills")
+    def skills_report(days: float = 30.0):
+        """Stage 6a: repeated procedures and skill candidates from the turn records (report only)."""
+        return skills.report(wslog.records(days))
+
+    @app.get("/api/workspace")
+    def workspace_report(days: float = 1.0, limit: int = 20):
+        """Stage 1a: how recent turns were handled (routes, memory ids, timings; never message text)."""
+        return {"summary": wslog.summary(days), "recent": wslog.recent(limit)}
 
     @app.get("/api/tools")
     async def tools_report(limit: int = 50):
@@ -414,7 +778,12 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     #  - a phrase that is confidently the owner adds itself, at most once every AUTO_EVERY_S;
     #  - an unclear phrase that sounds most like the owner makes Echo ask "Is that you?" (at most every ASK_EVERY_S);
     #    "yes" adds it. Only the owner's profile ever grows this way (the loved one's only with her own consent, on /voices.html).
-    voice = {"candidate": None, "check": None, "asked_at": 0.0, "auto_at": 0.0, "last": None}
+    voice = {"candidate": None, "check": None, "asked_at": 0.0, "auto_at": 0.0, "last": None,
+             "who": None, "confirmed_until": 0.0}
+    # Who I'm talking with stays known for the conversation (the owner, 2026-10-31: "don't ask constantly if I already
+    # confirmed once"): once someone is recognised, says "This is …" or answers "yes", an unclear phrase is still them
+    # until STICKY_S of quiet or a voice that clearly is someone else; after a "yes", no "Is that you?" for CONFIRMED_S.
+    STICKY_S, CONFIRMED_S = 3600, 12 * 3600
     AUTO_EVERY_S, ASK_EVERY_S, AUTO_SCORE, AUTO_GAP = 6 * 3600, 30 * 60, 0.82, 0.20
 
     async def identify_speaker(audio) -> dict:
@@ -844,7 +1213,127 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     def face_review(sha: str, face_i: int, body: FaceReviewIn):
         return face_call(faces.review, sha, face_i, body.status, body.preferred, body.age_label)
 
-    # ---- expressions from the Collector app → the avatar's face (previewed, applied only when the owner clicks) ----
+    # ---- Google Photos → face staging (the owner picks photos in Google's picker; faces still need their review) ----
+    gphotos = GooglePhotos(ROOT / "config" / "google-client.json", ROOT / "data" / "face-google",
+                           f"http://127.0.0.1:{cfg.server.port}/api/face/google/callback", faces)
+
+    @app.get("/api/face/google")
+    def face_google():
+        return {"set_up": bool(gphotos.client()), "accounts": gphotos.accounts()}
+
+    @app.get("/api/face/google/connect")
+    def face_google_connect(hint: str = ""):
+        from fastapi.responses import RedirectResponse
+        try:
+            return RedirectResponse(gphotos.sign_in_url(hint))
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/face/google/callback", response_class=Response)
+    def face_google_callback(code: str = "", state: str = "", error: str = ""):
+        page = "<body style='font:18px system-ui;padding:40px'>{}</body>"
+        if error or not code:
+            return Response(page.format("<h2>Google sign-in was cancelled.</h2><p>You can close this tab.</p>"), media_type="text/html")
+        try:
+            email = gphotos.finish(code, state)
+        except Exception as e:
+            log.warning("google photos sign-in failed: %s", type(e).__name__)
+            return Response(page.format("<h2>That didn't work.</h2><p>Close this tab and press “Connect Google Photos” again.</p>"),
+                            media_type="text/html")
+        log.info("google photos account connected")   # the address itself isn't logged
+        import html as _html
+        return Response(page.format(f"<h2>✓ Connected {_html.escape(email)}</h2><p>Echo can only see photos you pick "
+                                    "yourself in Google's picker. You can close this tab.</p>"), media_type="text/html")
+
+    @app.post("/api/face/google/pick")
+    def face_google_pick(body: FacePickIn):
+        if not faces.staging.is_dir():
+            raise HTTPException(400, "Face staging folder not found. Is the data drive plugged in?")
+        try:
+            return gphotos.start(body.email, body.group, body.age)
+        except (RuntimeError, ValueError) as e:
+            raise HTTPException(400, str(e))
+        except httpx.HTTPError as e:
+            log.warning("google photos picker failed: %s", type(e).__name__)
+            raise HTTPException(502, "Google Photos didn't answer: check the internet, or reconnect the account")
+
+    @app.get("/api/face/google/pick/{sid}")
+    def face_google_status(sid: str):
+        try:
+            return gphotos.status(sid)
+        except KeyError:
+            raise HTTPException(404, "unknown pick")
+        except httpx.HTTPError:
+            raise HTTPException(502, "Google Photos didn't answer: check the internet")
+
+    @app.delete("/api/face/google/{email}")
+    def face_google_forget(email: str):
+        gphotos.forget(email)
+        return {"ok": True}
+
+    # ---- photo collections Echo learns from (cats, places, nature, home, + the owner's own); learned only when approved ----
+    photos = photos or PhotoLibrary(cfg.resolve(cfg.dataset_root), store, OllamaDescriber(
+        cfg.llm.host, cfg.llm.model, {"temperature": cfg.llm.temperature, **cfg.llm.options}, cfg.llm.keep_alive))
+
+    def photo_call(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except PhotoError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/photos")
+    def photos_list():
+        return photo_call(photos.summary)
+
+    @app.post("/api/photos/scan")
+    async def photos_scan():
+        return await asyncio.to_thread(photo_call, photos.scan)
+
+    @app.post("/api/photos/categories")
+    def photos_add_category(body: PhotoCategoryIn):
+        return photo_call(photos.add_category, body.label)
+
+    @app.post("/api/photos/describe")
+    async def photos_describe(body: PhotoDescribeIn):
+        if not body.sha256:
+            return photo_call(photos.describe_waiting)
+        try:
+            return {"description": await asyncio.to_thread(photo_call, photos.describe, body.sha256)}
+        except httpx.HTTPError:
+            raise HTTPException(502, "Echo's model didn't answer: try again in a moment")
+
+    @app.patch("/api/photos/{sha}")
+    def photos_review(sha: str, body: PhotoPatchIn):
+        return photo_call(photos.review, sha, body.status, body.caption, body.category)
+
+    @app.post("/api/photos/{sha}/loved_one")
+    def photos_remove_loved_one(sha: str):
+        return photo_call(photos.remove_loved_one, sha)
+
+    @app.post("/api/photos/consolidate")
+    async def photos_consolidate():
+        """CA 2.0 Phase 4: update photo memories now (camera dates, same-day links, overview). Versioned, no deletes."""
+        return await asyncio.to_thread(photo_call, photos.consolidate)
+
+    @app.get("/api/photos/view/{name}")
+    def photos_view(name: str):
+        path = photo_call(photos.view_path, name)
+        if not path.exists():
+            raise HTTPException(404, "not found")
+        return FileResponse(path, media_type="image/jpeg")
+
+    @app.post("/api/photos/google/pick")
+    def photos_google_pick(body: PhotoPickIn):
+        dest = photo_call(photos.folder, body.category) / "google"
+        try:
+            return gphotos.start_to(body.email, dest, photos.scan)
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+        except httpx.HTTPError as e:
+            log.warning("google photos picker failed: %s", type(e).__name__)
+            raise HTTPException(502, "Google Photos didn't answer: check the internet, or reconnect the account")
+
+        # ---- expressions from the Collector app → the avatar's face (previewed, applied only when the owner clicks) ----
     @app.get("/api/face/expressions")
     def face_expr_status():
         root = cfg.resolve(cfg.dataset_root)
@@ -1087,6 +1576,63 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         return {"ok": True}
 
     # ---- personality versions (compare / undo) ----
+    def conversation_turns() -> list[dict]:
+        return [dict(r) for r in store.db.execute("SELECT role, content, ts FROM turns ORDER BY id")]
+
+    @app.get("/api/longterm")
+    def longterm_state():
+        """CA 2.0 Phase 10: each measure's state (dormant with progress / baseline_set / ok / watch with reasons)."""
+        last = lterm.last_run()
+        return {"last_run": last, "baselines": lterm.baselines(), "settings": lterm.settings(),
+                "next_run_due": lterm.due(), "data_leaves_this_computer": False}
+
+    @app.post("/api/longterm/run")
+    async def longterm_run_now():
+        return await asyncio.to_thread(run_longterm)
+
+    @app.post("/api/longterm/baseline/{metric}/reset")
+    def longterm_reset(metric: str):
+        """After an approved change meant to move a measure: start its baseline afresh (logged)."""
+        done = lterm.reset_baseline(metric)
+        log.info("long-term baseline reset: %s (%s)", metric, done)
+        return {"reset": done}
+
+    @app.get("/api/initiative")
+    def initiative_state():
+        """CA 2.0 Phase 9: what Echo would ask about next and why (scores are bookkeeping, not feelings)."""
+        return initiative.report(store, curiosity, learning)
+
+    @app.get("/api/development")
+    def development_report():
+        """CA 2.0 Phase 8: does each lesson the owner taught work? Before vs since, from Echo's real conversation (local,
+        my test turns left out). Rates and counts only. Nothing is switched off automatically: the owner decides."""
+        return development.report(trainer.lessons(), conversation_turns())
+
+    @app.get("/api/personality/layers")
+    def personality_layers():
+        """CA 2.0 Phase 8 (directive Layer A / §9): Echo's personality as four separate layers plus its change history.
+        1 foundation = the base instructions (changed only by a personality version the owner restores/saves);
+        2 stable tendencies = traits the owner approved from their own words; 3 learned preferences = Train Echo lessons, each
+        with its measured effect; 4 temporary state = the current conversation's state (cleared as conversations end)."""
+        prof = json.loads((pdir / "profile.json").read_text()) if (pdir / "profile.json").exists() else {}
+        measured = {x["id"]: x for x in development.report(trainer.lessons(), conversation_turns())["lessons"]}
+        vers = versions.list()
+        history = [{"at": v.get("time") or v.get("at"), "what": "personality version", "note": v.get("note"),
+                    "id": v.get("id")} for v in vers]
+        for les in trainer.lessons():
+            history.append({"at": les.get("added"), "what": "lesson added", "id": les["id"], "by": les.get("taught_by")})
+            if les.get("dropped"):
+                history.append({"at": les["dropped"], "what": "lesson dropped", "id": les["id"]})
+        return {"foundation": {"file": versions.prompt.name, "sha256": versions.current_hashes().get("personality.yaml"),
+                               "latest_version": (vers[-1] if vers else {}).get("id")},
+                "stable_tendencies": {"traits": prof.get("traits", []), "updated": prof.get("updated"),
+                                      "approved_by": "the owner (How I talk page)"},
+                "learned_preferences": [{"id": les["id"], "text": les["text"], "active": les.get("active", True),
+                                         "verdict": measured.get(les["id"], {}).get("verdict")}
+                                        for les in trainer.lessons()],
+                "temporary_state": cstate.snapshot(),
+                "history": sorted(history, key=lambda h: str(h["at"] or ""))}
+
     @app.get("/api/personality/versions")
     def list_versions():
         return {"versions": versions.list(), "current": versions.current_id()}
@@ -1206,41 +1752,56 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     # ---- conversation ----
     def build_messages(text: str, speaker: str | None = None, qvec: list[float] | None = None,
-                       extra_hint: str = "") -> list[dict]:
+                       extra_hint: str = "", query: str | None = None, warm_only: bool = False) -> list[dict]:
         """Stable part first (base personality, approved traits, memories while few), then the conversation, then the
-        parts that change every message (The owner's example sentences, memory search). Ollama reuses its work on an
-        unchanged beginning, which cuts the wait for the first word."""
+        parts that change every message (the owner's example sentences, memory search). Ollama reuses its work on an
+        unchanged beginning, which cuts the wait for the first word. warm_only: just the part every next message shares
+        (instructions + conversation), for reading it in advance — no memory search, nothing counted as used."""
         profile = persona.load_profile(pdir)
         notes = store.summaries()
         pack_text, pack_ids = pack.get(refresh=False)   # people + top memories; refreshed in quiet time (below)
+        recent_turns = store.turns_window(as_sent=True)   # first: after a break this is where the window resets
+        carry, _ = focus.carryover(store)   # CA 2.0 Phase 3: their own words from before a break, until a note covers them
         stable = [prompt["text"], persona.traits_block(profile), pack_text,
-                  format_summaries(notes[-3:])]                                     # the latest conversation notes
+                  format_summaries(notes[-3:]), carry]                              # the latest conversation notes
         system = "\n\n".join(x for x in stable if x)
         # Older notes or facts that match this message go with the message itself, not the system block: Ollama merges
         # every system message into the first one, so anything that changes there makes it re-read the whole
         # conversation (≈ 3 s). The stored conversation keeps only what was really said.
+        if warm_only:
+            window = [t if t["role"] != "user" else {**t, "content": strip_hints(t["content"])} for t in recent_turns]
+            return [{"role": "system", "content": system}] + _scrub_window(window) + [{"role": "user", "content": text}]
         recent_ids = {m.id for m in notes[-3:]} | pack_ids
         # memory/retrieve.py: by meaning, words, who/what is named ("my" = the speaker), and when ("on Thursday");
         # at most 3, only ones the message really points to, plus short facts about the people named
-        res = recall.retrieve(text, qvec, speaker, k=3, exclude=recent_ids)
+        res = recall.retrieve(query or text, qvec, speaker, k=3, exclude=recent_ids)   # query: topic-aware (focus.py)
         log.info("recall %d memories, facts about %d, %.1f ms: %s", len(res.hits), len(res.facts), res.ms,
                  "; ".join("+".join(r.split()[0] for r in h.why) for h in res.hits))   # reasons only, no content
         user = text
         store.note_use([h.memory.id for h in res.hits])
+        recall_info.update(ids=[h.memory.id for h in res.hits], ms=round(res.ms, 1), res=res)
         if (note := format_for_message(res, store)):
             user = note + "\n\n" + text
         if extra_hint:
             user = user + "\n\n" + extra_hint
         if speaker:   # like the notes, this goes with the message only; the stored conversation keeps what was said
-            who = {"owner": "the owner", "loved_one": cfg.loved_one_name or "my loved one"}.get(speaker, speaker.replace("_", " "))
+            who = {"owner": cfg.owner_name or "the owner", "loved_one": cfg.loved_one_name or "my loved one"}.get(
+                speaker, speaker.replace("_", " "))
             user = (f"[Recognised by voice: {who} is speaking]" if speaker != "unknown"
                     else "[Voice not recognised for sure: I don't call anyone by name until I know who it is]") + "\n" + user
-        window = store.turns_window(as_sent=True)
-        waiting = curiosity.pending() is not None   # a question I'm waiting on stays visible in my last reply
+        window = [t if t["role"] != "user" else {**t, "content": strip_hints(t["content"])}
+                  for t in recent_turns]
+        return [{"role": "system", "content": system}] + _scrub_window(window) + [{"role": "user", "content": user}]
+
+    def _scrub_window(window: list[dict]) -> list[dict]:
+        waiting = False   # old life questions always hidden: the model kept re-asking them (a story hint names the one answered)
         last_a = max((i for i, t in enumerate(window) if t["role"] == "assistant"), default=-1)
         window = [t if t["role"] != "assistant" or (waiting and i == last_a) else {**t, "content": curiosity.scrub(t["content"])}
                   for i, t in enumerate(window)]
-        return [{"role": "system", "content": system}] + window + [{"role": "user", "content": user}]
+        checking = voice["check"] is not None   # my "Is that you?" waiting for an answer stays visible
+        window = [t if t["role"] != "assistant" or (checking and i == last_a) else {**t, "content": scrub_identity(t["content"])}
+                  for i, t in enumerate(window)]
+        return window
 
     windows: list[WebSocket] = []  # open Echo windows; only the newest one may use the microphone
 
@@ -1343,13 +1904,33 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         except asyncio.CancelledError:   # another song was asked for: that one takes over
             pass
 
-    async def start_music(sock: WebSocket, url: str, vid: str, by: str) -> None:
-        """Play in Echo's own music window (the page mutes the mic) and listen along."""
+    async def watch_video(vid: str, started: float, closed: asyncio.Event) -> None:
+        """A video (not music): no listening along; when it ends I close its window so the mic comes back on."""
+        try:
+            info = await asyncio.to_thread(music.fetch_info, vid)
+            left = min(max(0.0, info.duration - (time.time() - started) + 3), music.MAX_SECONDS) if info.duration else 0
+            hush(left + 300)
+            if left:
+                try:
+                    await asyncio.wait_for(closed.wait(), timeout=left)
+                except asyncio.TimeoutError:
+                    pass
+            if not closed.is_set():
+                for w in windows[-1:]:
+                    await w.send_json({"type": "music_stop"})
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:  # noqa: BLE001  (no length known: the window stays until it is closed)
+            log.info("video length unknown: %s", type(e).__name__)
+
+    async def start_music(sock: WebSocket, url: str, vid: str, by: str, along_on: bool = True) -> None:
+        """Play in Echo's own music window (the page mutes the mic); music is listened along to, videos just play."""
         if along["task"] and not along["task"].done():
             along["task"].cancel()
         along["closed"] = asyncio.Event()
         await sock.send_json({"type": "music", "url": url, "vid": vid})
-        along["task"] = asyncio.create_task(listen_along(vid, by, time.time(), along["closed"]))
+        along["task"] = asyncio.create_task(listen_along(vid, by, time.time(), along["closed"]) if along_on
+                                            else watch_video(vid, time.time(), along["closed"]))
 
     @app.post("/api/say")
     async def say_test(body: SayIn, request: Request):
@@ -1387,7 +1968,48 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         windows.append(sock)
         await sock.send_json({"type": "history", "turns": store.recent_turns(MAX_TURNS),
                               "training": {"testing": trainer.testing, "busy": trainer.busy, "wrong": len(trainer.pending())}})
-        asked: dict[str, str] = {}   # answers to my last "which one?" question, if I asked one
+        asked: dict[str, str] = (cstate.get("which_one") or {}).get("answers") or {}   # my last "which one?" (restored)
+
+        async def perform(act, spk) -> str:
+            """Carry out an open/play Action (a command, or a "yes" to my offer); returns what to say."""
+            say = act.say
+            if act.close is not None:   # 2026-11-02: closing Chrome tabs showing that site
+                n = await asyncio.to_thread(browser.run_close, act.close)
+                log.info("browser close: %s tab(s)", n)
+                if n is None:
+                    return ("I couldn't close it. macOS may need to let me control Google Chrome: System Settings, "
+                            "Privacy and Security, Automation.")
+                return say if n else f"I don't see {act.say.removeprefix('Closing ').rstrip('.')} open in Chrome."
+            hush()
+            who_by = spk if spk and spk != "unknown" else "owner"
+            top = await asyncio.to_thread(browser.youtube_top, act.play, act.random) if act.play else None
+            if top and (vid := music.video_id(top)):   # play in my own window, mic off (music: listen along too)
+                await start_music(sock, top, vid, who_by, along_on=not act.video)
+            elif (act.url is not None or act.script) and not await asyncio.to_thread(browser.run, act):
+                say = "I couldn't open that just now. Is Google Chrome installed?"
+            elif act.url:
+                last_opened.update(host=browser._host(act.opened or act.url), name=act.say.removeprefix("Opening ").rstrip("."),
+                                   at=time.time())
+                cstate.set("opened", dict(last_opened))
+            log.info("browser action url=%s script=%s play=%s", bool(act.url), bool(act.script), bool(act.play))
+            return say
+
+        def done(rec: cws.TurnRecord, route: str, spk: str | None) -> None:   # workspace record (observe only)
+            rec.speaker = spk or "typed"
+            if not rec.ecw:   # commands etc.: a minimal workspace snapshot
+                rec.ecw = cws.LiveState(current_goal=rec.plan.get("kind"), next_action=route,
+                                        active_context={"route": route}).snapshot()
+            if not route.startswith("llm"):
+                rec.first_word()   # commands answer at once
+            if not rec.exec:   # Phase 7: commands, trainer, errors: the kind and the cache state still recorded
+                rec.exec = {"kind": rec.plan.get("kind"), "cache": cache_state, "answered_by": route}
+            wslog.save(rec, route)
+            try:   # CA 2.0: the persistent state after this turn (ids/labels only)
+                ecw = rec.ecw if isinstance(rec.ecw, dict) else {}
+                cstate.turn(spk, route, rec.plan.get("kind"), list(rec.memory_ids or []),
+                            entity_names(ecw.get("related_concepts")))
+            except Exception as e:  # noqa: BLE001
+                log.warning("state save failed: %s", type(e).__name__)
         try:
             while True:
                 msg = await sock.receive_json()
@@ -1417,7 +2039,17 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 speaker = msg.get("speaker") if msg.get("speaker") in (*speakers.profiles, "unknown") else None
                 if not text:
                     continue
+                rec = cws.TurnRecord()
+                recall_info.clear()
+                _tid, _ts = last_turn_row()
+                cache_state = keeper.state(SCHED.cache_disturbed, _ts)   # Phase 7: was the conversation still cached?
+                try:   # Stage 2a shadow mode: decision recorded only, nothing acts on it
+                    rec.plan = controller.classify(text, known_names()).as_record()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("controller failed: %s", type(e).__name__)
                 last_turn["at"] = time.time()   # someone is talking: no note-writing now
+                if (stopped := SCHED.turn_started()):   # conversation first: background LLM work stops right now
+                    log.info("background work paused for the conversation: %d request(s) stopped", stopped)
                 # "This is the owner" / "This is the loved one", said out loud: that phrase is a fresh room-mic sample of their voice
                 # (the owner, 2026-10-31). Only for people who already have a profile (the loved one's was made with her consent).
                 if speaker and (named := self_named(text, {"owner": cfg.owner_name, "loved_one": cfg.loved_one_name})) \
@@ -1434,22 +2066,36 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                             log.warning("voice sample failed: %s", type(e).__name__)
                         voice["last"] = None
                     speaker, voice["check"] = named, None   # they told me who they are
+                    voice["who"] = {"name": named, "at": time.time()}
+                    if named == "owner":
+                        voice["confirmed_until"] = time.time() + CONFIRMED_S
                 chk = voice["check"]
                 if chk and time.time() - chk["at"] < 180:   # the answer to my "Is that you?"
                     voice["check"] = None
                     if VOICE_YES.match(text):
                         n = await asyncio.to_thread(speakers.add_live, "owner", chk["emb"], "confirmed")
                         log.info("voice: room print added for owner (confirmed), %d live", n)
+                        voice["who"] = {"name": "owner", "at": time.time()}
+                        voice["confirmed_until"] = time.time() + CONFIRMED_S
                         say = f"Thanks{", " + cfg.owner_name if cfg.owner_name else ""}. I'll know your voice better now."
                         store.add_turn("user", text, speaker)
                         store.add_turn("assistant", say)
                         await sock.send_json({"type": "reply", "text": say, "expression": "smiling", "intensity": 0.3})
+                        SCHED.spoken_until(time.time() + speech_seconds(say))
                         await sock.send_json({"type": "state", "state": "idle"})
+                        done(rec, "voice_confirm", speaker)
                         continue
+                now = time.time()
+                if speaker and speaker != "unknown":                 # recognised: this is who I'm talking with now
+                    voice["who"] = {"name": speaker, "at": now}
+                elif speaker == "unknown" and (w := voice["who"]) and now - w["at"] < STICKY_S:
+                    speaker, w["at"] = w["name"], now                  # unclear phrase, same conversation: still them
+                    log.info("voice: unclear, still %s (same conversation)", speaker)
                 if replay_of is None and (step := trainer.handle(text)):   # testing / "Train Echo" / yes-no / pick a fix
                     hush()
                     store.add_turn("user", text, speaker)
                     await show_step(sock, step)
+                    done(rec, "trainer", speaker)
                     continue
                 music_say = None
                 if (genre := music.add_request(text)):
@@ -1468,51 +2114,196 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     fid = trainer.record(text, music_say, speaker, replay_of)   # commands can be wrong too: 👍/👎
                     await sock.send_json({"type": "reply", "text": music_say, "expression": "smiling", "intensity": 0.3,
                                           **({"fid": fid} if fid else {})})
+                    SCHED.spoken_until(time.time() + speech_seconds(music_say))
                     await sock.send_json({"type": "state", "state": "idle"})
+                    done(rec, "music", speaker)
                     continue
-                act = (asked and browser.answer(text, asked)) or browser.parse_play(text, speaker) or browser.parse(text)
+                # "Yes, let's do it." right after I offered to open/play something: do exactly that (2026-11-02)
+                offer = pending_offer.get("act") if time.time() - pending_offer.get("at", 0) < OFFER_S else None
+                pending_offer.clear()
+                if cstate.data.get("offer"):
+                    cstate.offer(None)
+                from_offer = offer if offer and browser.is_yes(text) else None
+                act = (from_offer or (asked and browser.answer(text, asked)) or browser.parse_close(text, last_opened)
+                       or browser.parse_play(text, speaker) or browser.parse(text))
+                if asked:
+                    cstate.set("which_one", None)
                 asked = {}
                 if act:   # "open the Weather Channel": done here, the LLM never picks an address
-                    say = act.say
-                    hush()
-                    who_by = speaker if speaker and speaker != "unknown" else "owner"
-                    top = await asyncio.to_thread(browser.youtube_top, act.play) if act.play else None
-                    if top and (vid := music.video_id(top)):   # play in my own window, mic off, listen along
-                        await start_music(sock, top, vid, who_by)
-                    elif (act.url is not None or act.script) and not await asyncio.to_thread(browser.run, act):
-                        say = "I couldn't open that just now. Is Google Chrome installed?"
+                    say = await perform(act, speaker)
                     asked = act.answers or {}
-                    log.info("browser action url=%s script=%s", bool(act.url), bool(act.script))  # address not logged
+                    if asked:
+                        cstate.set("which_one", {"at": time.time(), "answers": asked})
+                    if from_offer:
+                        rec.hints.append("yes_to_offer")
                     store.add_turn("user", text, speaker)
                     store.add_turn("assistant", say)
                     fid = trainer.record(text, say, speaker, replay_of)
                     await sock.send_json({"type": "reply", "text": say, "expression": act.expression,
                                           "intensity": 0.3 if act.expression != "neutral" else 0.0,
                                           **({"fid": fid} if fid else {})})
+                    SCHED.spoken_until(time.time() + speech_seconds(say))
                     await sock.send_json({"type": "state", "state": "idle"})
+                    done(rec, "browser", speaker)
+                    continue
+                # 2026-11-03: "Can you show me the picture?" / a yes to my offer to show it → the photo on screen
+                prev_reply = next((t["content"] for t in reversed(store.recent_turns(2)) if t["role"] == "assistant"), "")
+                showing = time.time() - last_photo.get("shown", 0) < PHOTO_S
+                if showphoto.asks_to_close(text, showing) or showphoto.asks_to_show(text) or (
+                        browser.is_yes(text) and showphoto.offered(prev_reply)):
+                    last = last_photo.get("sha") if time.time() - last_photo.get("at", 0) < PHOTO_S else None
+                    if showphoto.asks_to_close(text, showing):
+                        last_photo.pop("shown", None)
+                        say, expr = "Okay, I've put it away.", "neutral"
+                        await sock.send_json({"type": "photo_close"})
+                    elif not (sha := showphoto.pick(text, store, last)):
+                        say, expr = "Which picture would you like to see? Tell me a little about it, like who's in it.", "neutral"
+                    else:
+                        try:
+                            ok = photos.view_path(sha + ".jpg").exists()
+                        except Exception:  # noqa: BLE001 (photo drive not connected)
+                            ok = False
+                        if ok:
+                            last_photo.update(sha=sha, at=time.time(), shown=time.time())
+                            say, expr = "Here it is.", "smiling"
+                            await sock.send_json({"type": "photo", "url": f"/api/photos/view/{sha}.jpg"})
+                        else:
+                            say, expr = "I can't reach my photos right now. The photo drive may not be connected.", "neutral"
+                    hush()
+                    store.add_turn("user", text, speaker)
+                    store.add_turn("assistant", say)
+                    fid = trainer.record(text, say, speaker, replay_of)
+                    await sock.send_json({"type": "reply", "text": say, "expression": expr,
+                                          "intensity": 0.3 if expr != "neutral" else 0.0, **({"fid": fid} if fid else {})})
+                    SCHED.spoken_until(time.time() + speech_seconds(say))
+                    await sock.send_json({"type": "state", "state": "idle"})
+                    done(rec, "photo", speaker)
                     continue
                 fact = parse_remember(text)
                 if fact:
                     teller = speaker if speaker and speaker != "unknown" else None
                     m, dup = store.add(Memory(content=fact, source=f"{teller or 'owner'}:chat", told_by=teller))
                     check_conflicts_later(m, dup)
+                    rec.remembered = True
                     await sock.send_json({"type": "memory_saved", "memory": m.model_dump(), "duplicate": dup})
                 await sock.send_json({"type": "state", "state": "thinking"})
-                if (q := curiosity.take_answer(speaker, text)):   # the owner answered my question → reviewed later
+                # Story threads (the owner, 2026-10-31): an answer to my question gets a thoughtful reply about that same
+                # story and ONE follow-up question the model writes from what it knows about the topic (up to 2, then a
+                # warm close); never "tell me about another trip". Answers become suggestions on My memories.
+                follow_hint = None
+                if (q := curiosity.take_answer(speaker, text)):   # the owner answered my life question → reviewed later
+                    if (gid := mem_gaps.gap_id(q)) is not None:   # an objective the owner approved: answered now
+                        learning.decide(gid, "done", "owner:answered")
                     curiosity.queue_answer(q, text)
+                    follow_hint = curiosity.start_thread(q["text"], speaker, q.get("period"),
+                                                         photo=str(q.get("id", "")).startswith("photo:"), answer=text)
+                else:
+                    last_reply = next((t["content"] for t in reversed(store.recent_turns(4)) if t["role"] == "assistant"), "")
+                    if (f := curiosity.follow(speaker, text, last_reply)):
+                        follow_hint, ans = f
+                        curiosity.queue_answer(ans, text, teller="loved_one" if speaker == "loved_one" else None)
                 not_done = browser.wants_action(text) and not tools.urls_in(text)   # "open/play …" but no command matched
                 if not_done:
                     hush()
-                ask = (None if time.time() < quiet["until"] and not ASK_ME.search(text)   # not right after a command
+                ask = (None if follow_hint or curiosity.in_thread()
+                       or (time.time() < quiet["until"] and not ASK_ME.search(text))   # not right after a command
                        else curiosity.maybe_ask(speaker, text))
-                qvec = await asyncio.to_thread(embedder.query, text) if embedder else None   # ~15 ms
+                # CA 2.0 Phase 7 (core/executive.py): one plan for this message, every decision with its reason.
+                # Memory search: a real follow-up ("what season was it taken in?") is searched with the previous
+                # message (Phase 3); "It's freezing in here" is not a follow-up (11-03: it pulled in bridge photos).
+                xplan, query = executive.plan_turn(text, focus.previous_user(store), rec.plan.get("kind", "chat"),
+                                                   rec.plan.get("why"), not_done, cache_state)
+                qvec = await asyncio.to_thread(embedder.query, query) if embedder else None   # ~15 ms
                 cand, check_voice = voice["candidate"], False
                 if (speaker == "unknown" and cand and time.time() - cand["at"] < 60 and not ask and not not_done
-                        and time.time() - voice["asked_at"] >= ASK_EVERY_S and not trainer.busy):
+                        and not follow_hint
+                        and time.time() - voice["asked_at"] >= ASK_EVERY_S and not trainer.busy
+                        and time.time() >= voice["confirmed_until"]):
                     check_voice = True
                 messages = build_messages(text, speaker, qvec, browser.NOT_DONE if not_done else
-                                          (curiosity_hint(ask) if ask else
-                                           (voice_ask(cfg.owner_name) if check_voice else "")))
+                                          (follow_hint or (curiosity_hint(ask) if ask else
+                                                           (voice_ask(cfg.owner_name) if check_voice else ""))), query=query)
+                rec.hints = [n for n, on in (("follow", follow_hint), ("ask", ask), ("not_done", not_done),
+                                             ("voice_ask", check_voice), ("referential", query != text)) if on]
+                rec.memory_ids, rec.recall_ms = list(recall_info.get("ids", [])), recall_info.get("ms")
+                try:   # 2026-11-03: the photo this turn is about, for a later "show me the picture"
+                    if ask and str(ask.get("id", "")).startswith("photo:") and ask.get("memory_id"):
+                        row = store.db.execute("SELECT source FROM memories WHERE id = ?", (ask["memory_id"],)).fetchone()
+                        ps = showphoto.sha_of(row[0]) if row else None
+                    else:
+                        ps = showphoto.top_photo(getattr(recall_info.get("res"), "hits", None))
+                    if ps:
+                        last_photo.update(sha=ps, at=time.time())
+                except Exception as e:  # noqa: BLE001
+                    log.warning("photo tracking failed: %s", type(e).__name__)
+                rec.meaning_search = (qvec is not None) if embedder else None
+                try:   # Stage 4a: how well memory grounds this answer (recorded only)
+                    rec.grounding = grounding.label(recall_info.get("res"), rec.plan.get("kind")).as_record()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("grounding failed: %s", type(e).__name__)
+                # Stage 4b (the owner OK'd 2026-11-01): nothing / only loose matches in memory → a one-time note so I say
+                # "I don't remember" or "I think…" instead of guessing. ECHO_GROUNDING_NOTES=0 turns it off.
+                note = grounding.note(rec.grounding.get("label")) if xplan.may("grounding") else ""
+                if note:
+                    messages[-1]["content"] += "\n\n" + note
+                    rec.hints.append("grounding_" + rec.grounding["label"])
+                    xplan.fired("grounding")
+                # CA 2.0 Phase 6: metacognition checks (core/metacog.py) — a name no photo memory supports; a challenge
+                if xplan.may("name_check") and xplan.may("correction_check") and xplan.may("count_check"):
+                    res_now = recall_info.get("res")
+                    photos_found = [h.memory.content for h in (getattr(res_now, "hits", None) or [])
+                                    if (h.memory.source or "").startswith("photo:")]
+                    if re.search(r"\b(?:photos?|pictures?|pics)\b", text, re.I):   # about the photos: check them all
+                        photos_found = [r[0] for r in store.db.execute(
+                            "SELECT content FROM memories WHERE source LIKE 'photo:%' AND hidden IS NULL")]
+                    pets = frozenset(e["name"].lower() for e in ents.list() if e.get("type") == "pet" and e.get("name"))
+                    for mnote, tag in ((metacog.name_note(text, known_names(), photos_found, pets), "name_check"),
+                                       (metacog.correction_note(text, focus.previous_user(store)),
+                                        "correction_check"),
+                                       (metacog.count_note(text, known_names(), photos_found), "count_check")):
+                        if mnote:
+                            messages[-1]["content"] += "\n\n" + mnote
+                            rec.hints.append(tag)
+                            xplan.fired(tag)
+                # CA 2.0 Phase 5: social notes (core/social.py) — "I'm fine" after sad news; a physical need in the room
+                if xplan.may("social"):
+                    rows = store.db.execute("SELECT role, content, ts FROM turns WHERE id > ? ORDER BY id DESC LIMIT 8",
+                                            (store._view_from(),)).fetchall()
+                    if (snote := social.note(text, [dict(r) for r in reversed(rows)])):
+                        messages[-1]["content"] += "\n\n" + snote
+                        rec.hints.append("social_note")
+                        xplan.fired("social")
+                # CA 2.0 Phase 8: the owner's own lessons about how to answer news/stories, next to the message (core/development.py)
+                # (not when a social note fired: grief/physical needs come first — 11-03 eval_social: with both notes,
+                #  "I'm fine, really" after a loss got "I'm glad to hear you're doing okay" 2/2)
+                if "social_note" in rec.hints:
+                    xplan.modules["style"] = "social_note_first"
+                elif xplan.may("style") and (stnote := development.reminder(
+                        text, trainer.lessons(active=True), asking_hint=bool(follow_hint or ask))):
+                    messages[-1]["content"] += "\n\n" + stnote
+                    rec.hints.append("style_note")
+                    xplan.fired("style")
+                # Date / clock sums worked out exactly (core/datecalc.py, the owner 2026-11-01): the model words the answer
+                if xplan.may("date") and (dnote := datecalc.note(text)):
+                    messages[-1]["content"] += "\n\n" + dnote
+                    rec.hints.append("date_check")
+                    xplan.fired("date")
+                # Stage 7b (the owner OK'd 2026-11-01): a question about me → checked facts from my self-model, this once
+                if xplan.may("self_model") and selfmodel.is_self_question(text):
+                    try:
+                        messages[-1]["content"] += "\n\n" + selfmodel.note(await current_self())
+                        rec.hints.append("self_model")
+                        xplan.fired("self_model")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("self note failed: %s", type(e).__name__)
+                # UCA2 Phase 2: the live workspace for this turn (ids/labels only)
+                ecw = cws.LiveState()
+                ecw.publish("message", current_goal=rec.plan.get("kind"), active_systems=rec.plan.get("needs", []),
+                            active_context={"speaker": speaker or "typed"})
+                res_now = recall_info.get("res")
+                ecw.publish("retrieved", retrieved_evidence=list(rec.memory_ids),
+                            related_concepts=[e.get("id") for e in (getattr(res_now, "entities", None) or [])])
+                ecw.publish("grounded", confidence=rec.grounding.get("label"))
                 # core/tools.py: on web questions Echo may read pages himself (addresses the owner gave only)
                 turn = None
                 tset = permissions.load_settings(tools_cfg)
@@ -1520,6 +2311,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     turn = tools.Turn(research=tools.wants_research(text), follow=tset["follow_links"],
                                       max_pages=tset["max_pages"])
                     turn.allow(text, *[t["content"] for t in store.recent_turns(6)])
+                    turn.question = text   # Stage 6b shadow: the shortcut ranks links by the user's own words
+                    xplan.fired("tools")
                     messages[-1]["content"] += "\n\n" + tools.HINT
                     if turn.research and tset["follow_links"] != "never":
                         messages[-1]["content"] += "\n" + tools.RESEARCH_HINT.format(n=tset["max_pages"])
@@ -1527,14 +2320,19 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     # their name only now and then: allowed if none of the last 5 replies used it
                     recent = [t["content"] for t in store.recent_turns(10) if t["role"] == "assistant"][-5:]
                     name = cfg.loved_one_name.strip()
-                    parser = StreamParser(allow_name=not name or not any(name.lower() in r.lower() for r in recent),
-                                          name=name)
+                    parser = StreamParser(trim_opener=xplan.may("style_filter"),   # Phase 8: the owner's lesson
+                                          opener_names=people_names(),
+                                          allow_name=not name or not any(name.lower() in r.lower() for r in recent),
+                                          name=name,
+                                          block_names=[n for n in social.blocked_names(speaker, cfg)   # my own "Is that
+                                                       if not (check_voice and n == cfg.owner_name)])   # you, <name>?" stays
                     parser.ask(text)   # "blink for me" / "smile for me" happen even if the model forgets
                     t_start, t_first = time.perf_counter(), None
                     words = (tools.stream_with_tools(backend, messages, turn, prefetch=tools.prefetch_calls(text)) if turn
                              else backend.chat_stream(messages))
                     async for piece in words:
                         t_first = t_first or time.perf_counter()
+                        rec.first_word()
                         delta = parser.feed(piece)
                         if delta:  # words go to the window (and the voice) as they are written
                             await sock.send_json({"type": "delta", "text": delta, "expression": parser.expression,
@@ -1547,19 +2345,26 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     log.warning("llm error: %s", type(e).__name__)
                     await sock.send_json({"type": "error", "message": "My thinking engine isn't responding. Is Ollama running?"})
                     await sock.send_json({"type": "state", "state": "idle"})
+                    done(rec, "llm_error", speaker)
                     continue
-                store.add_turn("user", text, speaker, sent=messages[-1]["content"])   # as sent, for the next prompt
+                SCHED.cache_restored()   # this reply just read the whole conversation: it is in the model's cache now
+                store.add_turn("user", text, speaker, sent=strip_hints(messages[-1]["content"]))   # as sent, minus one-time notes
                 cited = ""
                 if turn and turn.sources:   # sources kept with the reply, so follow-up questions know the address
                     seen = {s["url"]: s for s in turn.sources}.values()
                     cited = "\n\nSources: " + "; ".join(f"{s['title']} ({s['url']})" for s in seen)
                     await sock.send_json({"type": "sources", "sources": list(seen)})
                 store.add_turn("assistant", reply.text + cited)
-                last_turn["at"] = time.time()
+                # quiet-time jobs wait until the reply has been SPOKEN, not just written: the voice is still talking for
+                # about len/14 s after the text is done, and a background LLM job then makes the voice hitch (2026-11-02)
+                last_turn["at"] = time.time() + speech_seconds(reply.text)
+                SCHED.spoken_until(last_turn["at"])
                 if check_voice and "is that you" in reply.text.lower():   # asked: the next "yes" teaches my ears
                     voice.update(check={"emb": cand["emb"], "at": time.time()}, asked_at=time.time(), candidate=None)
                 if ask and asked_in(reply.text, ask):   # he really asked it: wait for the owner's answer
                     curiosity.asked(ask)
+                    if (gid := mem_gaps.gap_id(ask)) is not None:
+                        learning.event(gid, "asked the owner", "echo")
                 st = getattr(backend, "last_stats", {})
                 log.info("turn ok expression=%s first_token_ms=%d prompt_tokens=%s prompt_ms=%s reply_tokens=%s "
                          "thinking_chars=%s tools=%s", reply.expression, round(((t_first or time.perf_counter()) - t_start) * 1000),
@@ -1569,7 +2374,39 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 fid = trainer.record(text, reply.text, speaker, replay_of)   # testing on: logged for 👍/👎
                 await sock.send_json({"type": "reply", **reply.model_dump(), **({"fid": fid} if fid else {}),
                                       **({"replay_of": replay_of} if replay_of else {})})
+                # 2026-11-02: an offer or announcement in my reply ("would you like to go to The Weather Channel?",
+                # "I will open YouTube and play Do It Again") becomes real: kept for a "yes", or done now if I said I'm
+                # doing it right after they said yes. Only things browser/music can really open or play.
+                try:
+                    if not not_done and (o := browser.offer_from_reply(reply.text, speaker)):
+                        o_act, claim = o
+                        if claim and browser.is_yes(text):
+                            said = await perform(o_act, speaker)
+                            rec.hints.append("claim_done")
+                            if said.startswith("I couldn't"):
+                                await sock.send_json({"type": "reply", "text": said, "expression": "neutral", "intensity": 0.0})
+                        else:
+                            pending_offer.update(act=o_act, at=time.time())
+                            cstate.offer(o_act)
+                            rec.hints.append("offer_kept")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("offer handling failed: %s", type(e).__name__)
                 await sock.send_json({"type": "state", "state": "idle"})
+                rec.llm_calls = st.get("rounds") or 1
+                rec.prompt_tokens, rec.reply_tokens = st.get("prompt_tokens"), st.get("reply_tokens")
+                rec.tools = [c["name"] + (":ok" if c["ok"] else ":no") for c in turn.calls] if turn else []
+                rec.skill_shadow = list(turn.shadow) if turn else []
+                ecw.publish("replied", next_action="tools" if turn else "reply",
+                            active_context={"speaker": speaker or "typed", "route": "llm_tools" if turn else "llm"})
+                rec.ecw = ecw.snapshot()
+                rec.exec = xplan.as_record()
+                try:   # Stage 5a: a question I couldn't answer → a proposed learning objective (recorded only)
+                    if (gk := mem_gaps.detect(rec.plan.get("kind"), rec.grounding.get("label"), reply.text, text)):
+                        learning.note(gk, text, speaker)
+                        rec.hints.append("gap_" + gk)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("gap not recorded: %s", type(e).__name__)
+                done(rec, "llm_tools" if turn else "llm", speaker)
         except WebSocketDisconnect:
             pass
         finally:
@@ -1584,6 +2421,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
+    app.state.build_messages, app.state.reread = build_messages, reread   # for tests (Phase 7: warm prompt = next prefix)
     app.mount("/", StaticFiles(directory=ROOT / "renderer", html=True), name="ui")
     return app
 

@@ -230,3 +230,12 @@ def test_blink_and_smile_on_request(ask, pieces, spoken, expr, blinks):
 def test_new_feelings(cue, expr):
     spoken, r = feed_all([f"[neutral] Well {cue}."])
     assert spoken.strip() == "Well." and r.expression == expr
+
+
+def test_model_override_only_when_set(monkeypatch):
+    monkeypatch.delenv("ECHO_LLM_MODEL", raising=False)
+    base = load_config().llm.model
+    monkeypatch.setenv("ECHO_LLM_MODEL", "gemma4:12b")
+    assert load_config().llm.model == "gemma4:12b"
+    monkeypatch.delenv("ECHO_LLM_MODEL")
+    assert load_config().llm.model == base

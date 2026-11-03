@@ -100,6 +100,11 @@ class Turn:
     hits: list = field(default_factory=list)               # web_search results (search.Hit), best first
     calls: list[dict] = field(default_factory=list)       # name, host, ok, why, chars, ms (no content)
     used_chars: int = 0
+    # Stage 6b shadow (core/skills.py): the user's own words, the link a no-LLM shortcut would pick after page_links,
+    # and whether the model picked the same one. Recorded only; nothing acts on it.
+    question: str = ""
+    shadow_pick: dict | None = None
+    shadow: list[dict] = field(default_factory=list)
 
     def allow(self, *texts: str) -> None:
         for t in texts:
@@ -193,6 +198,12 @@ def read_webpage(args: dict, turn: Turn) -> str:
         return "NO ADDRESS GIVEN."
     if not turn.permitted(url):
         return _refuse(url, turn)
+    if (sp := turn.shadow_pick):   # Stage 6b shadow: the model's choice vs the shortcut's
+        k = _key(url)
+        turn.shadow.append({"skill": "pick_link", "agree": k == sp["key"],
+                            "model_rank": sp["ranked"].index(k) + 1 if k in sp["ranked"] else None,
+                            "decision_ms": round((time.perf_counter() - sp["at"]) * 1000)})
+        turn.shadow_pick = None
     room = _budget(turn, RESEARCH_PAGE_CHARS if turn.research else PAGE_CHARS)
     if room < 400:
         return "NOT OPENED: no room left for more page text in this answer. Answer from what you have."
@@ -214,6 +225,13 @@ def page_links(args: dict, turn: Turn) -> str:
         return _refuse(url, turn)
     page = jsbrowser.read_smart(url, max_chars=1)
     turn.saw_links(page.url, page.links)
+    try:   # Stage 6b shadow: what the shortcut would read next (ranked by the USER's words, not the model's)
+        from core import skills
+        pick = skills.pick_link(turn.question or str(args.get("about") or ""), page.links)
+        turn.shadow_pick = {"key": _key(pick.url), "ranked": [_key(ln.url) for ln in skills.rank_links(
+            turn.question or str(args.get("about") or ""), page.links)][:MAX_LINKS], "at": time.perf_counter()} if pick else None
+    except Exception:  # noqa: BLE001
+        turn.shadow_pick = None
     want = _words(str(args.get("about") or ""))
     ranked = sorted(page.links, key=lambda ln: -len(want & _words(ln.text + " " + ln.url))) if want else page.links
     lines = [f"- {ln.text or '(no text)'}: {ln.url}" for ln in ranked[:MAX_LINKS]]

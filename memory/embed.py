@@ -6,6 +6,8 @@ search: nothing breaks, nothing is sent anywhere.
 """
 from __future__ import annotations
 
+import threading
+
 import httpx
 
 from memory.store import MemoryStore, life_details
@@ -17,6 +19,8 @@ class Embedder:
     def __init__(self, host: str, model: str = MODEL, timeout: float = 30.0):
         self.host, self.model, self.timeout = host, model, timeout
         self.failures = 0
+        self.warmups = 0
+        self._warming = threading.Lock()
 
     def _embed(self, texts: list[str], timeout: float | None = None) -> list[list[float]] | None:
         try:
@@ -31,7 +35,25 @@ class Embedder:
     def query(self, text: str) -> list[float] | None:
         """nomic models expect "search_query:" / "search_document:" prefixes."""
         v = self._embed([f"search_query: {text[:2000]}"], timeout=1.0)   # never hold up a reply for long
+        if v is None:
+            self.warm_later()
         return v[0] if v else None
+
+    def warm_later(self) -> None:
+        """Stage 3a fix (2026-11-01): if the model was unloaded (memory pressure, Ollama restart) and loading takes longer
+        than the 1 s query wait, Ollama ABORTS the load when we give up, so every later query failed the same way
+        (284 aborted loads logged 11-01) and meaning search stayed off. Load it in the background with a long wait
+        instead: this reply uses keywords only, the next one has meaning search again. One warm-up at a time."""
+        if not self._warming.acquire(blocking=False):
+            return
+
+        def run():
+            try:
+                self.warmups += 1
+                self._embed(["search_query: warm up"], timeout=self.timeout)
+            finally:
+                self._warming.release()
+        threading.Thread(target=run, name="embed-warmup", daemon=True).start()
 
     def index(self, store: MemoryStore, batch: int = 32) -> int:
         """Make vectors for new or edited memories. Returns how many were made."""

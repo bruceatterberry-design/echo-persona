@@ -2,7 +2,8 @@
 
 | Component | Version / pin | Use in Echo | License | Notes |
 |---|---|---|---|---|
-| Ollama + Llama 3.1 8B | 0.40.11 / llama3.1:8b | conversation | MIT (Ollama); Llama 3.1 Community License (model) | local only |
+| Ollama + Qwen 3.5 9B | 0.40.11 / qwen3.5:9b-q4_K_M | conversation (default since 1.0.0) | MIT (Ollama); Apache 2.0 (model) | local only |
+| Llama 3.1 8B (optional, the default before 1.0.0) | llama3.1:8b | conversation | Llama 3.1 Community License | local only |
 | mlx-whisper + whisper-large-v3-turbo | 0.4.2 | speech recognition | MIT (code); MIT (OpenAI Whisper weights) | |
 | NVIDIA Parakeet TDT 0.6B v2 (mlx-community) | — | speech recognition (chosen 2026-10-27) | CC-BY-4.0 | attribution: NVIDIA |
 | mlx-audio | 0.6.2 | voice-cloning runtime (separate env tts/) | MIT | |

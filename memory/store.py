@@ -418,7 +418,8 @@ class MemoryStore:
             return None
         c |= {k: v for k, v in (edits or {}).items() if k in self.CAND_FIELDS and k not in ("quote", "source")}
         m, dup = self.add(Memory(kind="memory", content=c["content"], status="confirmed", confidence=1.0,
-                                 source=f"owner:recording:{c['source']}"[:200], told_by="owner",
+                                 source=f"{'loved_one' if str(c['source']).startswith('loved_one:') else 'owner'}:recording:{c['source']}"[:200],
+                                 told_by="loved_one" if str(c["source"]).startswith("loved_one:") else "owner",
                                  **{k: (c[k] or None) for k in ("period", "when_text", "year", "people", "place")}))
         with self.db:
             self.db.execute("UPDATE candidates SET status='approved', memory_id=? WHERE id=?", (m.id, cid))

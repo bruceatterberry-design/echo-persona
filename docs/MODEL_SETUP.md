@@ -5,7 +5,7 @@ photo, approved personality traits) that can be changed without retraining.
 
 | Role | Model | Where | Size | How to get it again |
 |---|---|---|---|---|
-| Conversation | Llama 3.1 8B (Q4, Ollama) | `~/.ollama/models` | 4.9 GB | `ollama pull llama3.1:8b` |
+| Conversation | Qwen 3.5 9B (Q4_K_M, Ollama; default since 1.0.0) | `~/.ollama/models` | 6.6 GB | `ollama pull qwen3.5:9b-q4_K_M` |
 | Memory search by meaning | nomic-embed-text (Ollama) | `~/.ollama/models` | 274 MB | `ollama pull nomic-embed-text` |
 | Who's talking | WeSpeaker ResNet34 (sherpa-onnx) | `models/speaker/` | 26.5 MB | see docs/SPEAKERS.md |
 | Speech recognition (in use) | NVIDIA Parakeet TDT 0.6B v2 (MLX, via mlx-audio, `tts/stt_service.py`) | `~/EchoPersona/models/hf` | 2.5 GB (2.6 GB in memory) | same, repo `mlx-community/parakeet-tdt-0.6b-v2` (run from `~/EchoPersona/tts`); licence CC-BY-4.0 |

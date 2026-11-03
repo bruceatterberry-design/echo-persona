@@ -42,7 +42,7 @@ cd ~/EchoPersona && uv run pytest -q                                # automated 
 1. Restore the user account from Time Machine so `~/EchoPersona` comes back (code, data, models, venvs).
 2. Install the tools above (Homebrew installs are not in your home folder).
 3. `cd ~/EchoPersona && uv sync && (cd tts && uv sync)`; if `~/EchoPersona/animate/.venv` is broken, recreate it as in the table.
-4. `ollama serve` once and `ollama pull llama3.1:8b` if `~/.ollama/models` didn't come back.
+4. `ollama serve` once and `ollama pull qwen3.5:9b-q4_K_M` if `~/.ollama/models` didn't come back.
 5. `scripts/build_face_tools.sh`, then `scripts/install_autostart.sh`.
 6. Plug in the external SSD (or restore it, see BACKUP_AND_RECOVERY.md) and open Echo.
 7. In the new Echo window click **Allow** for the microphone.
@@ -51,5 +51,5 @@ cd ~/EchoPersona && uv run pytest -q                                # automated 
 - `config/voice.json`: which voice reference to use (set by `scripts/make_voice_reference.py`), and which speech
   recognizer: `"stt": "parakeet"` (default now) or `"whisper"`; restart `com.echopersona.core` after changing it.
 - `config/personality.example.yaml`: Echo's base personality. Copy to `config/personality.yaml` to customise.
-- `core/config.py` defaults: model `llama3.1:8b`, keep-alive 24 h, dataset at `/Volumes/External storage/EchoPersona-Data`.
+- `core/config.py` defaults: model `qwen3.5:9b-q4_K_M` (thinking off), keep-alive 24 h, dataset at `/Volumes/External storage/EchoPersona-Data`.
 - Optional `config/echo.yaml` overrides any of those (see `PersonaConfig`).

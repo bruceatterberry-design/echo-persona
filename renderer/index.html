@@ -64,6 +64,10 @@
   .hint { font-size: 12px; color: var(--dim); padding: 0 22px 12px; }
   .m.note { align-self: center; font-size: 12px; color: var(--speak); background: transparent; border-style: dashed; }
   @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; } #stage { border-right: 0; border-bottom: 1px solid var(--line); } }
+#photo-view{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:50;cursor:pointer}
+#photo-view.on{display:flex}
+#photo-view img{max-width:94vw;max-height:88vh;border-radius:10px;box-shadow:0 8px 40px #000}
+#photo-view p{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:#aab4be;font:15px system-ui;margin:0}
 </style>
 </head>
 <body>
@@ -77,7 +81,7 @@
   <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span></div>
 </section>
 <section id="side">
-  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/memories.html" target="_blank" style="font-size:12px;color:var(--accent)">My memories</a><a href="/voices.html" target="_blank" style="font-size:12px;color:var(--accent)">Who’s talking</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
+  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/photos.html" target="_blank" style="font-size:12px;color:var(--accent)">Photos</a><a href="/memories.html" target="_blank" style="font-size:12px;color:var(--accent)">My memories</a><a href="/voices.html" target="_blank" style="font-size:12px;color:var(--accent)">Who’s talking</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
   <div id="log" aria-live="polite"></div>
   <form id="f"><input type="text" id="q" placeholder="Talk to Echo…" autocomplete="off" aria-label="Message"><button type="button" id="micBtn" title="Click, or hold Space, to talk" aria-label="Talk">🎙</button><button>Send</button></form>
 </section>
@@ -404,11 +408,14 @@ async function speakOwn(text) {
 // ---------- streaming voice: speak while the reply is still being written ----------
 // Text arrives in pieces (deltas). Complete phrases are sent one at a time to the voice service, whose audio
 // streams back as raw PCM and is scheduled back-to-back on one AudioContext.
-// The voice is made only ~1.3x faster than it plays (slower while the Mac is busy), so after any silence audio is
-// held until V.lead seconds are ready (jitter buffer). A gap mid-reply raises the lead; a reply without gaps lowers it.
-const LEAD_MIN = 0.7, LEAD_MAX = 2.0;
+// The voice is made ~2.2x faster than it plays when the Mac is quiet, but only 0.5–0.8x while the language model works
+// (measured 2026-11-02: it is still writing the rest of the reply while the first phrase is spoken). Rule, calibrated on
+// recorded replies (stalls inside phrases 4 → 0): a phrase streams as it's made only when this phrase AND recent ones are
+// clearly faster than real time; otherwise it is held until complete and played whole, so any wait is a pause at a
+// comma or full stop, never a stall in the middle of a word. The first words of a reply keep a 0.7 s cushion.
+const LEAD_MIN = 0.7, FAST = 1.3;
 const V = { gen: 0, pending: '', queue: [], ended: false, pumping: false, ctx: null, nextTime: 0, abort: null, full: '', chunks: 0, failed: false,
-            lead: LEAD_MIN, started: false, gaps: 0, expr: 'neutral', blinks: 0, blinked: 0 };
+            rate: 1.0, started: false, gaps: 0, expr: 'neutral', blinks: 0, blinked: 0 };
 // A blink on request or from a "(blinks)" cue: blink now, then carry on with the natural rhythm.
 function blinkNow() { const now = performance.now(); P.blinkAt = now; P.nextBlink = now + 2500 + Math.random() * 4000; S.blink = 1; }
 const useOwn = () => $('speak').checked && $('voice').value === OWN;
@@ -421,6 +428,7 @@ function voiceBegin() {
   stopSpeaking();
   ownSpeaking = true; setState('speaking'); speakStarted = performance.now();  // keeps the mic closed from now on
 }
+const VOCATIVE = /^\s*(?:owner|owner|daddy|loved_one|honey|hon|sweetheart|echo|dear|darling|love|babe|buddy|son|my (?:friend|dear|love))\b[\s]*[,.!?…;:]/i;
 function takeChunks(final) {
   // A phrase is ready at a sentence end, or at a pause (, ; :) once it is long enough. The first one is kept short.
   const out = [];
@@ -428,11 +436,20 @@ function takeChunks(final) {
     const min = V.chunks + out.length === 0 ? 18 : 40;
     const sent = V.pending.match(/^[\s\S]*?[.!?…]+["')\]]*(?=\s)/);
     let cut = sent ? sent[0].length : -1;
+    let wait = false;
     if (cut < 0 && V.pending.length >= min) {
       const re = /[,;:—–](?=\s)/g; let m;
-      while ((m = re.exec(V.pending))) if (m.index + 1 >= min) { cut = m.index + 1; break; }
+      while ((m = re.exec(V.pending))) {
+        if (m.index + 1 < min) continue;
+        // never cut just before a name or term of address ("…wonderful, | the owner."): it would be spoken as its own piece,
+        // with a pause in front of it. Wait for the next word (milliseconds), and keep it with the sentence.
+        const after = V.pending.slice(m.index + 1);
+        if (!/^\s*\S+[\s,.!?;:…]/.test(after)) { wait = !final; break; }
+        if (VOCATIVE.test(after)) continue;
+        cut = m.index + 1; break;
+      }
     }
-    if (cut < 0) break;
+    if (cut < 0 || wait) break;
     const c = V.pending.slice(0, cut).trim(); V.pending = V.pending.slice(cut);
     if (c) out.push(c);
   }
@@ -462,8 +479,7 @@ async function voicePump() {
   if (V.queue.length) return voicePump();
   if (V.ended) {  // everything scheduled: go idle when the last sound finishes
     const left = V.ctx ? Math.max(0, V.nextTime - V.ctx.currentTime) : 0;
-    if (V.gaps) console.info(`voice: ${V.gaps} gap(s), lead now ${V.lead.toFixed(1)} s`);
-    else V.lead = Math.max(LEAD_MIN, V.lead - 0.1);
+    if (V.gaps) console.info(`voice: ${V.gaps} stall(s) inside a phrase, recent voice speed ${V.rate.toFixed(2)}x`);
     setTimeout(() => { if (gen === V.gen) { ownSpeaking = false; setState('idle'); } }, left * 1000 + 150);
   }
 }
@@ -480,7 +496,8 @@ async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
                                              body: JSON.stringify({ text }), signal: V.abort.signal });
   if (!r.ok) throw new Error('voice service');
   const rate = +r.headers.get('X-Sample-Rate') || 24000, reader = r.body.getReader();
-  let carry = null, hold = [], held = 0, faceSet = false;
+  let carry = null, hold = [], held = 0, faceSet = false, flushed = false;
+  let tFirst = null, gotFirst = 0, got = 0;   // this phrase's own speed
   const flush = () => {
     if (!faceSet && hold.length) {   // the face changes when this phrase is heard, not when it was written
       faceSet = true; const at = Math.max(V.nextTime, V.ctx.currentTime + 0.06);
@@ -498,7 +515,7 @@ async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
       const src = V.ctx.createBufferSource(); src.buffer = buf; src.connect(V.an);
       const at = after ? now + 0.06 : V.nextTime; src.start(at); V.nextTime = at + buf.duration;
     }
-    hold = []; held = 0; V.started = true;
+    hold = []; held = 0; V.started = true; flushed = true;
   };
   for (;;) {
     const { value, done } = await reader.read();
@@ -509,12 +526,22 @@ async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
     if (!bytes.length) continue;
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2), f = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
-    const playing = V.nextTime > V.ctx.currentTime + 0.06;
-    if (!playing && !hold.length && V.started) { V.gaps++; V.lead = Math.min(LEAD_MAX, V.lead + 0.3); }  // ran dry
-    hold.push(f); held += f.length / rate;
-    if (playing || held >= V.lead) flush();
+    const now = performance.now() / 1000, d = f.length / rate;
+    got += d; if (tFirst === null) { tFirst = now; gotFirst = d; }
+    hold.push(f); held += d;
+    if (flushed) {   // this phrase is already playing: keep it going
+      if (V.nextTime < V.ctx.currentTime + 0.02) V.gaps++;   // ran dry inside a phrase (should now be rare)
+      flush(); continue;
+    }
+    const speed = hold.length >= 2 && now > tFirst + 0.05 ? (got - gotFirst) / (now - tFirst) : 0;
+    const ahead = Math.max(0, V.nextTime - V.ctx.currentTime) + held;
+    if (speed >= FAST && V.rate >= 1.0 && ahead >= (V.started ? 0 : LEAD_MIN)) flush();
   }
-  if (gen === V.gen && hold.length) flush();   // a short phrase ends before the lead fills
+  if (gen === V.gen && hold.length) flush();   // complete (or slow) phrase: play it whole
+  if (tFirst !== null && got > 0.9) {   // remember how fast the voice is running right now
+    const w = performance.now() / 1000 - tFirst;
+    if (w > 0.2) V.rate = 0.6 * V.rate + 0.4 * ((got - gotFirst) / w);
+  }
 }
 function speak(text) {
   if (!$('speak').checked) { setState('idle'); return; }
@@ -571,6 +598,8 @@ function connect() {
     if (m.type === 'sources') { pendingSources = m.sources; }
     if (m.type === 'music') startMusic(m.url, m.vid);
     if (m.type === 'music_stop') endMusic(false);
+    if (m.type === 'photo') showPhoto(m.url);
+    if (m.type === 'photo_close') hidePhoto();
     if (m.type === 'choices') { addChoices(m.options || []); }
     if (m.type === 'history' && m.training) trainingHint(m.training);
     if (m.type === 'training') trainingHint(m);
@@ -847,6 +876,15 @@ function endMusic(byUser, quiet) {
   if (byUser) ws.send(JSON.stringify({ type: 'music_closed', vid: m.vid }));
 }
 window.addEventListener('beforeunload', () => { try { music && music.win.close(); } catch {} });
+// A photo Echo remembers (2026-11-03): "Can you show me the picture?" shows it over the face until clicked or
+// "close the picture". Closes by itself after 10 minutes so it's never left covering Echo.
+let photoTimer = null;
+function showPhoto(url) {
+  const v = $('photo-view'); v.querySelector('img').src = url; v.classList.add('on');
+  clearTimeout(photoTimer); photoTimer = setTimeout(hidePhoto, 600000);
+}
+function hidePhoto() { clearTimeout(photoTimer); $('photo-view').classList.remove('on'); }
+document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#photo-view')) hidePhoto(); });
 // Only one Echo window may use the microphone: a newer one (any browser) tells older ones to stand down.
 function standDown() {
   if (recording) { recording = false; recBuf = []; }
@@ -872,5 +910,6 @@ try {
 // Every time Echo opens it listens for "Hey Echo" (the mic opens; Chrome asks permission once).
 $('listen').value = 'wake'; $('listen').onchange();
 </script>
+<div id="photo-view" title="Click to close"><img alt="A photo Echo remembers"><p>Click anywhere, or say "close the picture"</p></div>
 </body>
 </html>

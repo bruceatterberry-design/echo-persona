@@ -167,3 +167,20 @@ def test_room_prints_make_a_second_centroid(tmp_path):
     assert sum(s.startswith("live:") for s in srcs) == S.LIVE_MAX and srcs.count("take") == 5
     with pytest.raises(ValueError):
         sid.add_live("nobody", room, "auto")
+
+
+def test_coreml_first_then_cpu_fallback(tmp_path, monkeypatch):
+    import sherpa_onnx
+    from voice.speaker import SpeakerID
+    tried = []
+
+    class Fake:
+        def __init__(self, cfg):
+            tried.append(cfg.provider)
+            if cfg.provider == "coreml":
+                raise RuntimeError("no Core ML here")
+    monkeypatch.setattr(sherpa_onnx, "SpeakerEmbeddingExtractor", Fake)
+    monkeypatch.setattr(SpeakerID, "provider", "coreml")
+    sid = SpeakerID(tmp_path / "model.onnx", tmp_path / "speakers")
+    sid._extractor()
+    assert tried == ["coreml", "cpu"] and sid.provider_used == "cpu"

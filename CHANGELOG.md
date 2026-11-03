@@ -1,12 +1,69 @@
 # Changelog
 
-Echo Persona is alpha software: versions may change things without a migration path. Keep backups of your data.
+Echo Persona is beta software (out of alpha since 1.0.0): versions may still change things without a migration path. Keep backups of your data.
 
-## Unreleased — in development (2026-10-31 → 2026-11-02)
+## 1.0.0-beta (2026-11-03): out of alpha, thinks before it speaks
 
-These changes are built and tested in the developer's private build. **They are not in this repository's code yet**;
-they will arrive with the next release, after the owner has used them day to day. Measured numbers are from a
-Mac mini M4, 16 GB.
+![Echo Persona 1.0.0-beta](docs/report/release-1.0.0.svg)
+
+Measured on a Mac mini M4, 16 GB, with `qwen3.5:9b` (set `model:` in `config/echo.yaml`). Every change below was
+tested on a copy of real memories before it was kept; changes that didn't help were measured and dropped.
+
+### New default language model: Qwen 3.5 9B
+- New installs use `qwen3.5:9b-q4_K_M` instead of `llama3.1:8b` (`core/config.py`, `config/echo.example.yaml`,
+  README setup). Why: fewer made-up details on the same 16 questions (docs/BENCHMARKS.md), and every 1.0.0
+  measurement was made with it. Same memory while running (≈ 4.9 GB), 6.6 GB download, Apache 2.0.
+- Qwen's thinking mode is switched off automatically (it waits 2–4 minutes before the first word), and Qwen's
+  recommended sampling settings are used, unless you set your own `think` / `options` in `config/echo.yaml`.
+  Default temperature 0.7 → 0.4.
+- Existing installs keep whatever `model:` their `config/echo.yaml` names. To go back: `model: "llama3.1:8b"`,
+  `temperature: 0.7`.
+
+### Shows a photo it remembers
+- "Can you show me the picture?", "Show me the one with <name>", "Can I see it?" or a yes to Echo's offer puts the
+  approved photo on screen. Echo picks the photo your words name, else the one you were just talking about, else it
+  asks which. Click it or say "close the picture" to close it. Removed or unapproved photos are never shown, and Echo
+  no longer offers to open a "photo gallery" that doesn't exist (`core/showphoto.py`).
+
+### A cognitive architecture, built in ten measured steps
+- **Conversation first:** a scheduler stops every background model request the moment someone talks (first word
+  behind a background job 16.2 s → 0.18 s), waits until a reply has been *spoken*, and suspends background work when
+  the Mac runs low on memory. Pause it any time (`/api/scheduler`).
+- **State that survives restarts:** what Echo was in the middle of (an offer, a "which one?" question, the last thing
+  opened) is kept in `data/state.json` and restored on start.
+- **Continuity:** after a break, your own words from before it are carried over until a conversation note covers
+  them; follow-ups are searched together with the previous message. Continuity test 13/18 → 18/18.
+- **Photo memories know when they were taken:** camera dates are kept apart from the date shared, photos from the same
+  day are linked, and a collection overview is kept. Right answers 4/14 → 13/14; invented details 4 → 1.
+- **Social cognition:** never addresses an unrecognised voice by name, never calls one person by another's name,
+  responds gently when "I'm fine" follows sad news, and never offers to change the heat or lights (it can't).
+  Social test 8/20 → 13/20.
+- **Metacognition:** exact photo counts worked out in code, no names the photos don't support, and a second look when
+  challenged ("Are you sure? I think it's 10") instead of agreeing to please. 9/14 → 15/16.
+- **One transparent executive controller** decides, per message, which checks run, with the reason recorded
+  (`/api/executive`). The experimental activation network ("NDAS") was retired: it never beat the memory search.
+- **Faster first word:** the conversation is read in advance exactly up to where the next message begins:
+  2.5 s → 0.25 s (with memory notes 4.7 → 2.5 s); after a 30-minute break it is re-read once in quiet time
+  (memory questions 6–7 s → 3.2–3.8 s). Tried and dropped: re-reading after every background job (no gain).
+- **Developmental learning:** a check-up of every Train Echo lesson against real replies, before vs since
+  (`/api/development`); lessons that aren't followed get a just-in-time reminder in the owner's own words and a filter
+  that drops a reply's opening only when it is nothing but a stock phrase ("That sounds wonderful, Sam."). Stock
+  openings 15 → 10 of 20, replies ending in a question 15 → 6 of 20. Personality as four inspectable layers with a
+  change history (`/api/personality/layers`).
+- **Initiative:** uncaptioned photos are ranked (people or pets unnamed, dated, part of a day) and asked about in turn
+  with the life questions, at most every 30 minutes, the owner's voice only. A photo answer gets one warm reply and no
+  invented follow-up (inventions 3/4 → 0). Confirming "Yes, that's me" teaches Echo that the photo shows the owner
+  and, as the owner's digital self, Echo too. Only real questions become learning objectives (false ones 41 → 16).
+- **Long-term evaluation, dormant until there's enough data:** first word, how often each check fires, lessons,
+  question answer rate and memory health. Each measure wakes up at its own threshold (`config/longterm.json`), uses only
+  data collected after it was installed, sets *this computer's* baseline and then reports ok / watch with a reason
+  (`/api/longterm`). Numbers only; nothing is sent anywhere.
+
+### Built for any household
+- **Names come from settings:** `owner_name` and `loved_one_name` in `config/echo.yaml` drive every rule that needs a
+  name (core/people.py). Nothing about one family is built into the code.
+- Google sign-in for the Photos picker is its own module (`face/google_auth.py`).
+- Fix: the `ECHO_LLM_MODEL` override now also works without a `config/echo.yaml`.
 
 ### Thinking and self-knowledge
 - **Turn records:** every reply leaves a small record (route, timings, which memories were used; never the words),
@@ -22,7 +79,7 @@ Mac mini M4, 16 GB.
 - **Exact date and clock sums** without the language model ("Wednesday + 10 days"): reasoning set 31/36 → 34/36.
 - **Shadow components** (record only, never change a reply): an executive controller (agreed with what Echo actually did
   in 93 % of real turns), a link-picking shortcut and an experimental activation network. The network did not beat the
-  existing memory search (13/88 vs 85/88) and is likely to be retired.
+  existing memory search (13/88 vs 85/88) and was retired in this release.
 - **Tried and not kept (measured):** a second "work it out" pass (no accuracy gain, first word 2 s → 7 s) and a
   per-reply variety note (first word 1.7 s → 5.5 s); replaced by fixed conversation lessons that cost no time.
 

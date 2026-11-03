@@ -54,8 +54,14 @@ class StreamParser:
     A missing or unknown tag means neutral, so a model that forgets the tag still works.
     """
 
-    def __init__(self, allow_name: bool = True, name: str = "") -> None:
+    def __init__(self, allow_name: bool = True, name: str = "", block_names: list[str] | None = None,
+                 trim_opener: bool = False, opener_names: list[str] | None = None) -> None:
         self.names = NameFilter(name, allow=allow_name)
+        self.opener = OpenerFilter(opener_names) if trim_opener else None   # CA 2.0 Phase 8 (the owner's lesson), see OpenerFilter
+        # CA 2.0 Phase 5: names that may not be used to address whoever is speaking (core/social.py blocked_names):
+        # an unrecognised voice is addressed by no name; the owner is never called by the loved one's name, and back
+        self.blocked = [NameFilter(n, allow=False) for n in (block_names or [])
+                        if n and not (n == name and not allow_name)]   # that name's own filter already blocks it
         self.buf = ""
         self.expression: str = "neutral"
         self.tag_done = False
@@ -85,7 +91,11 @@ class StreamParser:
         if not hasattr(self, "_af"):
             self._af = ActionFilter()
         clean, expr = self._af.feed(piece, final)
+        if self.opener:
+            clean = self.opener.feed(clean, final)
         clean = self.names.feed(clean, final)
+        for f in self.blocked:
+            clean = f.feed(clean, final)
         if expr:
             self.expression = expr   # the avatar shows it from here on
         self.text += clean
@@ -219,6 +229,49 @@ class ActionFilter:
         if clean:
             self.last = clean[-1]
         return clean, expr
+
+
+class OpenerFilter:
+    """the owner's lesson: "I don't start replies with a stock phrase followed by 'the owner' (like 'That's great, the owner;')".
+    Measured 11-03 (scripts/eval_style.py): the lesson alone didn't change it (15/20 replies, and 29 % of real replies
+    since). When a reply BEGINS with a sentence that is nothing but a stock phrase — "That sounds wonderful, the owner." /
+    "That is wonderful news, the owner;" — that phrase is dropped and the reply starts at its real content ("Walking with
+    the loved one must have been…"). Anything with content in it ("That sounds like a wonderful way to spend your childhood")
+    is kept, and a reply that is ONLY the phrase is kept. Only the reply's first words are held back, and only when they
+    start with "That"/"It"."""
+
+    STARTS = ("that", "it")
+
+    def __init__(self, names: list[str] | None = None) -> None:
+        """names: the household's names from this install's settings (core/people.py), e.g. "…wonderful, Sam."."""
+        if names is None:
+            from core import people
+            names = people.names()
+        alt = "|".join(re.escape(n) for n in names if n) or r"(?!x)x"
+        self.PURE = re.compile(r"^(\s*)(?:that(?:'s|’s| is| sounds)|it(?:'s|’s| is| sounds))(?: like)?(?: (?:so|really|"
+                               r"very|just|truly))? (?:wonderful|great|lovely|nice|good|fantastic|amazing|exciting|"
+                               r"beautiful)(?: (?:news to hear|news|to hear))?(?:,? (?:" + alt + r"))?\s*[.;!]\s+(?=\S)", re.I)
+        self.buf, self.done = "", False
+
+    def feed(self, piece: str, final: bool = False) -> str:
+        if self.done:
+            return piece
+        self.buf += piece
+        head = self.buf.lstrip().lower()
+        if head and not any(head.startswith(w + c) or (w + c).startswith(head)
+                            for w in self.STARTS for c in (" ", "'", "’")):
+            return self._release(self.buf)
+        if not final and len(self.buf) < 90 and not re.search(r"[.;!]\s+\S", self.buf):
+            return ""                                  # not decided yet
+        m = self.PURE.match(self.buf)
+        if m:
+            rest = self.buf[m.end():]
+            return self._release(m.group(1) + rest[:1].upper() + rest[1:])
+        return self._release(self.buf)
+
+    def _release(self, text: str) -> str:
+        self.done, self.buf = True, ""
+        return text
 
 
 class NameFilter:

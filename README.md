@@ -1,5 +1,7 @@
 # Echo Persona
 
+<p align="center"><img src="docs/report/brain-1.0.0.svg" width="100%" alt="Echo Persona 1.0.0-beta: a glowing blue, purple and indigo brain with Echo's new cognitive functions pointing to brain regions"></p>
+
 > [!CAUTION]
 > **Echo is now able to open web pages, read their contents, listen to music and make evaluations. These functions
 > are protected, but they can be manipulated by an outside LLM. bruceatterberry-design is not liable or responsible
@@ -13,7 +15,7 @@ internet when you ask it to (read a web page, look something up, play or listen 
 if you switch it on; see Privacy.
 
 - **Talks and listens:** say "Hey Echo, …" or use push-to-talk. Local speech recognition (Parakeet / Whisper) and a
-  local language model (Llama 3.1 8B via Ollama). Replies stream, so it starts speaking within a few seconds.
+  local language model (Qwen 3.5 9B via Ollama). Replies stream, so it starts speaking within a few seconds.
 - **Your voice:** record about 30 minutes in the built-in **Avatar Collector**; Echo clones your voice from your best takes
   (Qwen3-TTS, zero-shot, no training run needed).
 - **Your face:** add a few photos; Echo renders a talking, blinking face from one of them (LivePortrait, offline).
@@ -28,9 +30,102 @@ if you switch it on; see Privacy.
 - **Android Collector app (optional):** guided daily sessions that record your voice and face video on your phone, and
   copy to the Mac over a USB cable only (the app has no internet permission).
 
-> **⚠️ Alpha software.** Echo Persona is early, experimental software (version **0.4.0-alpha**). Expect rough edges, breaking
-> changes between versions, and features that have only been tested on one Mac. Keep backups of your recordings
-> (`scripts/backup_dataset.sh`) and don't rely on it for anything important yet.
+> **✅ Out of alpha: now in beta.** Echo Persona 1.0.0-beta is feature-complete for everyday use and covered by 716
+> automated tests, but it has so far been tested on one Mac. Expect some rough edges, keep backups of your recordings
+> (`scripts/backup_dataset.sh`), and please report problems.
+
+## What's new in 1.0.0-beta 🔥 Hot!
+
+**A new brain.** Version 1.0.0 gives Echo a new way of thinking, called the *Unified Cognitive Architecture*
+(CA 2.0). Instead of one big step, each message now goes through ten small parts that work together. The numbers
+below match the numbers in the picture at the top. Each part is drawn on the area of the brain that does a similar
+job in people. That's only a comparison: Echo is software, not a brain.
+
+1. 🧭 **Executive controller** (front of the brain): *decides how to handle each thing you say.* Like a person
+   deciding "this is a question about the past, let me think back", Echo picks the right checks for each message
+   and keeps a note of why.
+2. 🗂️ **Working memory** (front of the brain): *remembers what it was doing, even after a restart.* If Echo asked
+   "Would you like to see it?" and the computer restarts, it still knows what "yes" means.
+3. 🔍 **Metacognition**, or "thinking about its own thinking" (middle of the brain): *double-checks itself before
+   it answers.* It says "I'm not sure which one" instead of guessing a name, counts photos exactly, and doesn't
+   back down from a correct answer just because someone pushes.
+4. 💜 **Social awareness** (deep inside, where feelings are handled): *picks up on feelings, not just words.* When
+   someone says "I'm fine, really" right after sad news, Echo is gentle instead of cheerful.
+5. 🧠 **Continuity and follow-ups** (the memory centre): *keeps track of what you're talking about.* Ask "what season
+   was it taken in?" and Echo knows you still mean the photo you were just discussing, even after a break.
+6. ✍️ **Learned style** (the area for practised skills): *learns the way you want it to talk.* When you teach Echo a
+   lesson ("don't end every reply with a question"), it checks whether it actually follows it.
+7. 🎯 **Attention scheduler** (the area that decides what to focus on): *drops background work the moment you speak.*
+   Echo tidies its memories when it's quiet, but you always come first.
+8. 📷 **Initiative** (the seeing area at the back): *asks about your photos, and shows them when asked.* It might ask
+   "Who is in this picture?", and when you say "Can you show me the picture?" it puts the photo on the screen.
+9. 📈 **Self-monitoring** (the area for fine-tuning, at the back and bottom): *checks over the weeks that it isn't
+   slipping.* Once it has enough conversations it compares each week with your own normal, quietly, on your Mac.
+10. ⚡ **Instant start** (the brainstem, for automatic reactions): *starts answering in a quarter of a second.* Echo
+    reads the conversation ahead of time, so the first word comes in 0.25 s instead of 2.5 s.
+
+### 🆕 New default language model: Qwen 3.5 9B
+
+New installs now start with **Qwen 3.5 9B** instead of Llama 3.1 8B. The language model is the part of Echo that
+puts words together, a bit like the voice of its thinking. In plain terms, here's what changes for you:
+
+- **Fewer made-up details.** On the same 16 tricky questions, Qwen invented details less often than Llama. When
+  Echo doesn't know something, it's more willing to say so.
+- **It's the model Echo was tested with.** Every number on this page, including the new brain's results, was
+  measured with Qwen 3.5 9B on a 16 GB Mac.
+- **About as fast once it's warmed up** (first word about 1.6 s in a running conversation), and it uses about the
+  same memory while running (≈ 4.9 GB), so it still fits on a 16 GB Mac. The download is bigger: 6.6 GB instead of
+  4.9 GB.
+- **"Thinking mode" stays off.** Qwen can think silently before answering, but that takes 2–4 minutes before the
+  first word. Echo switches it off automatically.
+- **Simpler license:** Apache 2.0.
+
+**Already using Echo?** Nothing changes until you choose to switch. To switch, run
+`ollama pull qwen3.5:9b-q4_K_M` and set `model: "qwen3.5:9b-q4_K_M"` in `config/echo.yaml`. To keep or go back to
+Llama, set `model: "llama3.1:8b"` and `temperature: 0.7`.
+
+### Old brain vs new brain
+
+![Before and after: six measures of Echo's conversation, the old brain versus the 1.0.0 cognitive architecture](docs/report/before-after-1.0.0.svg)
+
+| Measure (real model, same Mac, same questions) | Before (old brain) | After (1.0.0, CA 2.0) |
+|---|---|---|
+| Follows the conversation | 13/18 (72%) | **18/18 (100%)** |
+| Honest memory checks (names, counts, corrections) | 9/14 (64%) | **15/16 (94%)** |
+| Reasoning (3 runs; checks nothing got worse) | 31/36 (86%) | **31/36 (86%)** |
+| Replies not ending in a question | 5/20 (25%) | **14/20 (70%)** |
+| Social awareness | 8/20 (40%) | **12/20 (60%)** |
+| Replies without a stock opening | 5/20 (25%) | **10/20 (50%)** |
+| First word while background work is running | 16.2 s | **0.18 s** |
+| Automated tests | 411 passed (0.4.0) | **716 passed** |
+
+The samples are small, so read them as direction, not precision.
+
+![Echo Persona 1.0.0-beta: first word 0.25 s after Echo has read the conversation (was 2.5 s)](docs/report/release-1.0.0.svg)
+
+### All the details
+
+- **Starts talking sooner:** Echo now reads the conversation in advance exactly up to where your next message begins,
+  so a reply only has to read what's new: first word **2.5 s → 0.25 s** (with memory notes 4.7 → 2.5 s). After a
+  30-minute break it re-reads once while it's quiet: memory questions **6–7 s → 3.2–3.8 s**. Conversation always
+  comes first: background work stops the moment someone talks.
+- **One transparent controller:** for every message Echo decides which checks to use (memory honesty, exact counts,
+  social notes, date sums, self-knowledge) and records why, never the words. See `/api/executive`.
+- **Remembers where you were:** after a break, your own words from before it are carried over; follow-ups like "what
+  season was it taken in?" stay on the topic.
+- **Honest when it matters:** says "I don't know which one" instead of guessing a name in a photo, counts exactly
+  ("six photos mention Milo"), keeps a correct answer when challenged, and is gentle after sad news.
+- **Your lessons, checked:** Echo measures whether each Train Echo lesson is actually followed in real conversation
+  (`/api/development`) and helps the ones that aren't: replies ending in a question 15 → 6 of 20 in testing.
+- **Asks about your photos:** uncaptioned photos become questions ("I have a photo from May 2011 of a smiling man. Is
+  that you?"); your answer waits for your review. When it's you, Echo understands that it is you and, as your
+  digital self, Echo too.
+- **Watches itself over time:** a built-in long-term check stays dormant until it has enough of *your* data, then
+  compares each week with your own baseline (`/api/longterm`). Numbers only; nothing leaves your Mac.
+- **Your household, your names:** every rule that needs a name (who may be addressed by name, "This is <name>", stock
+  openings) reads `owner_name` and `loved_one_name` from `config/echo.yaml`; nothing is built in.
+
+Measured on a Mac mini M4 (16 GB) with `qwen3.5:9b`. Full details: [CHANGELOG](CHANGELOG.md).
 
 ## What's new in 0.4.0-alpha
 - **Reads the web by itself, on your Mac's own model:** give Echo an address and ask what it says; ask it to research
@@ -61,8 +156,8 @@ if you switch it on; see Privacy.
 
 ![Memory before and after the 16 GB voice fix](docs/report/5-memory.svg)
 
-Tool features were measured with `qwen3.5:9b` (set `model:` in `config/echo.yaml`); the default `llama3.1:8b` also
-supports tools but hasn't been measured yet.
+All features were measured with `qwen3.5:9b`, the default since 1.0.0 (set `model:` in `config/echo.yaml` to use
+another Ollama model).
 
 ## What's new in 0.3.0
 - **Life memories.** Memories can carry when they happened (childhood, teens, young adult, adult, recent; year; your
@@ -119,7 +214,7 @@ with macOS and Chrome. Measured on a Mac mini M4 with 16 GB:
 
 | Part | Model | Memory while loaded | Speed |
 |---|---|---|---|
-| Thinking | Llama 3.1 8B (4-bit, Ollama) | ≈ 4.9 GB | ≈ 19 tokens per second |
+| Thinking | Qwen 3.5 9B (4-bit, Ollama; 6.6 GB download) | ≈ 4.9 GB | ≈ 18 tokens per second |
 | Your voice | Qwen3-TTS 0.6B (MLX) | ≈ 2.6 GB | ≈ 1.3× faster than real time on its own |
 | Listening | Parakeet TDT 0.6B v2 (MLX) | ≈ 2.6 GB | ≈ 0.13 s per question |
 | Face builds (offline, not while chatting) | LivePortrait (PyTorch MPS) | peak ≈ 5 GB | ≈ 1.3 s per frame, ≈ 10 min per face |
@@ -155,7 +250,7 @@ cd ~/EchoPersona
 brew install uv ffmpeg ollama
 uv sync && (cd tts && uv sync)
 brew services start ollama   # or: ollama serve
-ollama pull llama3.1:8b
+ollama pull qwen3.5:9b-q4_K_M   # Echo's language model (6.6 GB)
 ollama pull nomic-embed-text   # memory search by meaning (274 MB)
 mkdir -p models/speaker && curl -L -o models/speaker/wespeaker_en_voxceleb_resnet34.onnx \
   https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx   # who's talking (26.5 MB)
@@ -246,4 +341,4 @@ uv run pytest -q                           # automated tests
 ## License
 MIT; see [LICENSE](LICENSE). Third-party models and libraries keep their own licenses:
 [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PARTY_LICENSES.md) (for example, Parakeet is CC-BY-4.0 and needs attribution to NVIDIA,
-and Llama 3.1 has its own community license).
+and Qwen 3.5 is Apache-2.0).

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Echo Photos</title>
+<style>
+  :root { --bg: #07090c; --panel: #0e1217; --line: #1c232c; --text: #d9e1e8; --dim: #7c8894;
+          --accent: #7fb8d6; --good: #8fcfa8; --warn: #c9a86a; --err: #d97b7b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--line); gap: 12px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 2; }
+  header h1 { margin: 0; font-weight: 300; letter-spacing: .3em; font-size: 16px; }
+  a { color: var(--accent); }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
+  .bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  button { background: transparent; border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.on { background: var(--accent); color: #07131b; }
+  button.ok.on { background: var(--good); border-color: var(--good); }
+  button.no.on { background: var(--err); border-color: var(--err); color: #fff; }
+  button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  select, input, textarea { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 13px; }
+  textarea { width: 100%; resize: vertical; min-height: 54px; }
+  .counts { color: var(--dim); font-size: 13px; }
+  .note { background: var(--panel); border: 1px solid var(--warn); color: var(--warn); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-size: 14px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+  .tabs button { border-radius: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .card.approved { border-color: var(--good); }
+  .card.rejected { opacity: .45; }
+  .card img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #000; }
+  .info { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .meta { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desc { font-size: 13px; color: var(--text); }
+  .desc.none { color: var(--dim); font-style: italic; }
+  .learned { font-size: 11px; color: var(--good); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .empty { color: var(--dim); padding: 30px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PHOTOS</h1>
+  <div class="bar" style="margin:0"><a href="/face.html">My face</a><a href="/">← Back to Echo</a></div>
+</header>
+<main>
+  <div id="msg"></div>
+  <div class="bar tabs" id="tabs" role="tablist" aria-label="Categories"></div>
+  <div class="box">
+    <div class="bar" style="margin:0">
+      <span id="gp" class="bar" style="margin:0"></span>
+      <button id="scan">Look for new photos</button>
+      <button id="describeAll">Ask Echo to describe waiting photos</button>
+      <span style="flex:1"></span>
+      <label class="counts">Show <select id="filter"><option value="pending">Needs review</option><option value="approved">Approved (Echo learned)</option><option value="rejected">Not used</option><option value="all">All</option></select></label>
+    </div>
+    <p class="counts" id="drop" style="margin:8px 0 0"></p>
+  </div>
+  <p class="counts" style="margin-top:0">Echo describes each photo; add who/where/when in your own words, then <b>Approve</b>. Only approved photos become Echo's memories. <b>Not this one</b> means Echo never learns from it.<br><b>Remove completely</b> deletes a photo and anything Echo learned from it; it won’t be imported again.</p>
+  <div id="lib"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let data = null, cat = localStorage.getItem('photoCat') || 'cats';
+async function api(path, opts) { const r = await fetch('/api/' + path, opts); const j = await r.json(); if (!r.ok) throw new Error(j.detail); return j; }
+const json = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+function msg(text, warn = true) { $('msg').innerHTML = ''; if (!text) return; const d = document.createElement('div'); d.className = 'note'; d.textContent = text; if (!warn) d.style.borderColor = d.style.color = 'var(--good)'; $('msg').appendChild(d); }
+async function load() { data = await api('photos'); if (!data.categories.some(c => c.id === cat)) cat = data.categories[0].id; render(); }
+function render() {
+  const T = $('tabs'); T.innerHTML = '';
+  for (const c of data.categories) {
+    const n = data.counts[c.id] || {}, b = document.createElement('button');
+    b.textContent = c.label + (n.pending ? ` (${n.pending} to review)` : ''); b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', c.id === cat);
+    if (c.id === cat) b.className = 'on';
+    b.onclick = () => { cat = c.id; localStorage.setItem('photoCat', cat); render(); }; T.appendChild(b);
+  }
+  const add = document.createElement('button'); add.textContent = '+ Add category';
+  add.onclick = async () => { const label = prompt('New category name (e.g. Family, Holidays):'); if (!label) return;
+    try { const c = await api('photos/categories', json('POST', { label })); cat = c.id; await load(); } catch (e) { msg(e.message); } };
+  T.appendChild(add);
+  const label = data.categories.find(c => c.id === cat).label;
+  $('drop').textContent = `Or drop photos for “${label}” into EchoPersona-Data/staging/photos/${cat}/ on the data drive, then press Look for new photos.`;
+  const d = data.describing; $('describeAll').disabled = d.running;
+  $('describeAll').textContent = d.running ? `Echo is describing… ${d.done} of ${d.total}` : 'Ask Echo to describe waiting photos';
+  const f = $('filter').value, L = $('lib'); L.innerHTML = '';
+  const items = data.photos.filter(p => p.category === cat && (f === 'all' || p.status === f));
+  if (!items.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Nothing here yet.'; L.appendChild(e); return; }
+  const g = document.createElement('div'); g.className = 'grid'; L.appendChild(g);
+  for (const p of items) g.appendChild(card(p));
+}
+function card(p) {
+  const d = document.createElement('div'); d.className = 'card ' + p.status;
+  const img = document.createElement('img'); img.loading = 'lazy'; img.src = '/api/photos/view/' + p.sha256.slice(0, 16) + '.jpg'; img.alt = p.caption || p.description || p.name;
+  const info = document.createElement('div'); info.className = 'info';
+  const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = p.name; meta.title = p.name;
+  const desc = document.createElement('div'); desc.className = 'desc' + (p.description ? '' : ' none');
+  desc.textContent = p.description ? 'Echo sees: ' + p.description : 'Echo hasn’t described this yet.';
+  const again = document.createElement('button'); again.textContent = p.description ? 'Describe again' : 'Describe';
+  again.onclick = async () => { again.disabled = true; again.textContent = 'Looking…';
+    try { await api('photos/describe', json('POST', { sha256: p.sha256 })); await load(); } catch (e) { msg(e.message); again.disabled = false; } };
+  const cap = document.createElement('textarea'); cap.value = p.caption; cap.placeholder = 'Your words: who, where, when (e.g. “Daisy on the back porch, summer 2021”)';
+  cap.setAttribute('aria-label', 'Caption for ' + p.name);
+  cap.onchange = () => set(p, { caption: cap.value });
+  const move = document.createElement('select'); move.setAttribute('aria-label', 'Category');
+  for (const c of data.categories) { const o = document.createElement('option'); o.value = c.id; o.textContent = 'In: ' + c.label; move.appendChild(o); }
+  move.value = p.category; move.onchange = () => set(p, { category: move.value });
+  const row = document.createElement('div'); row.className = 'row';
+  const ok = document.createElement('button'); ok.className = 'ok' + (p.status === 'approved' ? ' on' : ''); ok.textContent = p.status === 'approved' ? 'Approved' : 'Approve';
+  ok.onclick = () => set(p, { caption: cap.value, status: p.status === 'approved' ? 'pending' : 'approved' });
+  const no = document.createElement('button'); no.className = 'no' + (p.status === 'rejected' ? ' on' : ''); no.textContent = 'Not this one';
+  no.onclick = () => set(p, { status: p.status === 'rejected' ? 'pending' : 'rejected' });
+  const loved_one = document.createElement('button'); loved_one.className = 'no'; loved_one.textContent = 'Remove completely';
+  loved_one.title = 'Deletes this photo and anything Echo learned from it; it won’t be imported again';
+  loved_one.onclick = async () => { try { await api(`photos/${p.sha256}/loved_one`, { method: 'POST' }); msg('Removed. Echo won’t use this photo, and it won’t be imported again.', false); await load(); } catch (e) { msg(e.message); } };
+  row.append(ok, no, again, move, loved_one);
+  info.append(meta, desc, cap, row);
+  if (p.memory_id) { const l = document.createElement('div'); l.className = 'learned'; l.textContent = `✓ Echo remembers this (memory #${p.memory_id})`; info.appendChild(l); }
+  d.append(img, info); return d;
+}
+async function set(p, body) { try { await api('photos/' + p.sha256, json('PATCH', body)); await load(); } catch (e) { msg(e.message); } }
+$('filter').onchange = render;
+$('scan').onclick = async () => { $('scan').disabled = true;
+  try { const r = await api('photos/scan', { method: 'POST' }); msg(`Found ${r.new_photos} new photo(s)` + (r.duplicates ? `, ${r.duplicates} already here` : '') + (r.unreadable ? `, ${r.unreadable} couldn’t be read` : '') + '.', false); await load(); }
+  catch (e) { msg(e.message); } $('scan').disabled = false; };
+async function poll() { await load(); if (data.describing.running) setTimeout(poll, 4000); else if (data.describing.error) msg('Describing stopped: ' + data.describing.error); }
+$('describeAll').onclick = async () => { try { await api('photos/describe', json('POST', {})); poll(); } catch (e) { msg(e.message); } };
+async function gpLoad() {
+  const g = await api('face/google'), el = $('gp'); el.innerHTML = '';
+  if (!g.set_up) { el.textContent = 'Google Photos: not set up yet (docs/GOOGLE_SETUP.md).'; el.className = 'counts'; return; }
+  if (!g.accounts.length) { const a = document.createElement('a'); a.href = '/api/face/google/connect'; a.target = '_blank'; a.textContent = 'Connect Google Photos'; el.appendChild(a); return; }
+  const go = document.createElement('button'); go.textContent = 'Pick from Google Photos'; el.appendChild(go);
+  go.onclick = async () => {
+    const win = window.open('about:blank', '_blank'); go.disabled = true;
+    try {
+      const s = await api('photos/google/pick', json('POST', { email: g.accounts[0], category: cat }));
+      if (win) win.location = s.picker_uri; else msg('Your browser blocked the Google Photos window. Allow pop-ups for Echo and try again.');
+      msg('Pick your photos in the Google Photos window, then press Done there.', false);
+      let fails = 0;
+      for (;;) {
+        await new Promise(r => setTimeout(r, 3000));
+        let st; try { st = await api('face/google/pick/' + s.id); fails = 0; }
+        catch (e) { if (++fails >= 10) throw e; msg('Google didn’t answer, trying again…'); continue; }   // a brief Google hiccup shouldn't lose the pick
+        if (st.state === 'importing') msg(`Copying photos from Google: ${st.done} of ${st.total || '…'}`, false);
+        if (st.state === 'error') { msg(st.error); break; }
+        if (st.state === 'done') { msg(`Imported ${st.result.new_photos} new photo(s)` + (st.skipped ? `, ${st.skipped} videos/other files skipped` : '') + '. Press “Ask Echo to describe waiting photos”, add your words, then Approve.', false); await load(); break; }
+      }
+    } catch (e) { if (win) win.close(); msg('Google Photos: ' + e.message); }
+    go.disabled = false;
+  };
+}
+load().then(() => { if (data.describing.running) poll(); }).catch(e => msg('Can’t reach Echo: ' + e.message));
+gpLoad().catch(() => {});
+</script>
+</body>
+</html>

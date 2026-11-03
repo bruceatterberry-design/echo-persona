@@ -37,15 +37,18 @@
   .star { border: 0; font-size: 18px; padding: 0 4px; color: var(--dim); }
   .star.on { background: transparent; color: var(--warn); }
   .empty { color: var(--dim); padding: 30px 0; }
+  .gp { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 16px; }
+  .gp h2 { margin: 0 0 6px; font-size: 13px; font-weight: 500; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
 </style>
 </head>
 <body>
 <header>
   <h1>FACE LIBRARY</h1>
-  <div class="bar" style="margin:0"><button id="scan">Look for new photos</button><a href="/">← Back to Echo</a></div>
+  <div class="bar" style="margin:0"><button id="scan">Look for new photos</button><a href="/photos.html">Photos</a><a href="/">← Back to Echo</a></div>
 </header>
 <main>
   <div id="msg"></div>
+  <section class="gp" aria-labelledby="gph"><h2 id="gph">Google Photos</h2><div id="gp" class="counts">Checking…</div></section>
   <div class="bar">
     <span class="counts" id="counts"></span>
     <span style="flex:1"></span>
@@ -124,6 +127,55 @@ $('scan').onclick = async () => {
   $('scan').disabled = false; $('scan').textContent = 'Look for new photos';
 };
 load().catch(e => msg('Can’t reach Echo: ' + e.message));
+
+// ---- Google Photos: the owner picks photos in Google's own picker; every face found still waits for "This is me" ----
+async function gpLoad() {
+  const g = await api('google'), el = $('gp'); el.innerHTML = '';
+  const line = t => { const d = document.createElement('div'); d.textContent = t; el.appendChild(d); return d; };
+  if (!g.set_up) { line('Not set up yet: Google needs a one-time setup on this Mac (docs/GOOGLE_SETUP.md, including the Photos Picker step).'); return; }
+  if (!g.accounts.length) {
+    line('Connect your Google Photos. Echo will only ever see the photos you pick yourself.');
+    const b = document.createElement('button'); b.textContent = 'Connect Google Photos';
+    b.onclick = () => { window.open('/api/face/google/connect', '_blank'); line('Finish signing in in the new tab, then come back here.'); setTimeout(gpLoad, 15000); };
+    el.appendChild(b); return;
+  }
+  const row = document.createElement('div'); row.className = 'bar'; row.style.margin = '6px 0 0';
+  const acct = document.createElement('select'); acct.setAttribute('aria-label', 'Google account');
+  for (const a of g.accounts) { const o = document.createElement('option'); o.value = o.textContent = a; acct.appendChild(o); }
+  const grp = document.createElement('select'); grp.setAttribute('aria-label', 'These photos are');
+  for (const [v, t] of [['current', 'These photos are: me now'], ['younger', 'These photos are: me when I was younger']]) { const o = document.createElement('option'); o.value = v; o.textContent = t; grp.appendChild(o); }
+  const age = document.createElement('select'); age.setAttribute('aria-label', 'Age in these photos');
+  for (const a of ['unknown', 'child', 'teens', '20s', '30s', '40s', '50s']) { const o = document.createElement('option'); o.value = a; o.textContent = 'Age: ' + a; age.appendChild(o); }
+  age.hidden = true; grp.onchange = () => { age.hidden = grp.value !== 'younger'; };
+  const go = document.createElement('button'); go.textContent = 'Pick photos from Google Photos';
+  go.onclick = () => gpPick(acct.value, grp.value, age.value, go);
+  row.append(acct, grp, age, go); el.appendChild(row);
+  line('Up to 500 photos at a time. Nothing joins your face library until you press “This is me” on each face below.').style.marginTop = '6px';
+}
+async function gpPick(email, group, age, btn) {
+  const win = window.open('about:blank', '_blank');   // opened now so the browser doesn't block it
+  btn.disabled = true;
+  try {
+    const s = await api('google/pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, group, age }) });
+    if (win) win.location = s.picker_uri; else msg('Your browser blocked the Google Photos window. Allow pop-ups for Echo and try again.');
+    msg('Pick your photos in the Google Photos window, then press Done there.', false);
+    let fails = 0;
+    for (;;) {
+      await new Promise(r => setTimeout(r, 3000));
+      let st; try { st = await api('google/pick/' + s.id); fails = 0; }
+        catch (e) { if (++fails >= 10) throw e; msg('Google didn’t answer, trying again…'); continue; }   // a brief Google hiccup shouldn't lose the pick
+      if (st.state === 'importing') msg(`Copying photos from Google: ${st.done} of ${st.total || '…'}`, false);
+      if (st.state === 'error') { msg(st.error); break; }
+      if (st.state === 'done') {
+        const r = st.result;
+        msg(`Imported ${st.done} photo(s): ${r.new_photos} new with ${r.faces_found} face(s)` + (r.duplicates ? `, ${r.duplicates} already here` : '') + (st.skipped ? `, ${st.skipped} videos/other files skipped` : '') + '. Review them below: only faces you mark “This is me” are added.', false);
+        $('filter').value = 'pending'; await load(); break;
+      }
+    }
+  } catch (e) { if (win) win.close(); msg('Google Photos: ' + e.message); }
+  btn.disabled = false;
+}
+gpLoad().catch(e => { $('gp').textContent = 'Google Photos: ' + e.message; });
 </script>
 </body>
 </html>

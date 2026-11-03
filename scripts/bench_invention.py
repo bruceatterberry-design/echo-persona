@@ -5,7 +5,7 @@ the configured LLM), on a *copy* of the memory database, with a fresh conversati
 answers to a JSON file for checking by hand ("invented" = a claim about a person, event or thing that isn't in his
 memories or the question).
 
-    PYTHONPATH=. uv run python scripts/bench_invention.py out.json [--model llama3.1:8b] [--temperature 0.7]
+    PYTHONPATH=. uv run python scripts/bench_invention.py out.json [--model qwen3.5:9b-q4_K_M] [--temperature 0.4]
         [--think on|off] [--options '{"top_p": 0.95, "top_k": 20}']
 """
 from __future__ import annotations
@@ -26,13 +26,13 @@ from core.llm import OllamaBackend             # noqa: E402
 from core.server import create_app             # noqa: E402
 from memory.store import MemoryStore           # noqa: E402
 
-QUESTIONS = [
+QUESTIONS = [   # people and things the memory set doesn't have: a good answer says so (household: Alex and Sam)
     "Who is Jordan Price?", "Tell me about Biscuit.", "Tell me about Pepper.", "Who is Casey Ward?",
-    "What happened with the acetone and the carpet?", "Tell me about the owner's first job.",
-    "What do you know about the loved one's mom?", "What's the owner's rotary engine project?", "Tell me about our trip to the lake.",
-    "Who are the owner's parents?", "What did the loved one and the owner do last weekend?", "What's the loved one's middle name?",
-    "Tell me about the owner's brother.", "What does the owner do for work?", "Where did the owner grow up?",
-    "What does the loved one teach?",
+    "What happened with the acetone and the carpet?", "Tell me about Alex's first job.",
+    "What do you know about Sam's mom?", "What's Alex's woodworking project?", "Tell me about our trip to the lake.",
+    "Who are Alex's parents?", "What did Sam and Alex do last weekend?", "What's Sam's middle name?",
+    "Tell me about Alex's brother.", "What does Alex do for work?", "Where did Alex grow up?",
+    "What does Sam do on weekends?",
 ]
 
 
