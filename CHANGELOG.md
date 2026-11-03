@@ -2,6 +2,61 @@
 
 Echo Persona is alpha software: versions may change things without a migration path. Keep backups of your data.
 
+## Unreleased — in development (2026-10-31 → 2026-11-02)
+
+These changes are built and tested in the developer's private build. **They are not in this repository's code yet**;
+they will arrive with the next release, after the owner has used them day to day. Measured numbers are from a
+Mac mini M4, 16 GB.
+
+### Thinking and self-knowledge
+- **Turn records:** every reply leaves a small record (route, timings, which memories were used; never the words),
+  kept 30 days, so changes can be judged on real use, not only benchmarks.
+- **Grounding labels without an extra model call:** each memory used is labelled known / believed / inferred / unknown.
+  On held-out questions: claims made as "known" were right 59/59; questions with no answer in memory were not claimed
+  10/10. When nothing is found, Echo says so instead of guessing.
+- **Self-model from the live system:** what Echo can and can't do is built from what is actually running (voice on,
+  tools on, photos remembered …). Questions about himself get a short note from it: false claims about his own
+  abilities 1/36 → 0/24 (e.g. he no longer says "yes, I can see you").
+- **Learning objectives:** gaps in his memory become *proposed* things to learn; the owner decides, research only from a
+  source the owner gives; a later check tests whether the learning helped.
+- **Exact date and clock sums** without the language model ("Wednesday + 10 days"): reasoning set 31/36 → 34/36.
+- **Shadow components** (record only, never change a reply): an executive controller (agreed with what Echo actually did
+  in 93 % of real turns), a link-picking shortcut and an experimental activation network. The network did not beat the
+  existing memory search (13/88 vs 85/88) and is likely to be retired.
+- **Tried and not kept (measured):** a second "work it out" pass (no accuracy gain, first word 2 s → 7 s) and a
+  per-reply variety note (first word 1.7 s → 5.5 s); replaced by fixed conversation lessons that cost no time.
+
+### Conversation fixes
+- **Echo does what he offers or announces:** "Want me to open the weather?" → "yes" now opens it; hedged commands
+  ("could you maybe open …") work; no more "I'll open it" without opening.
+- **"Close that" / "close YouTube"** closes Chrome tabs of that site only.
+- Story follow-ups stay on the same story; one-time instructions are no longer replayed from history; Echo asks once
+  who is talking and then remembers.
+
+### Speech and voice
+- **Speech recognition on the Apple Neural Engine** (Parakeet TDT v2, Core ML via FluidAudio): word error 1.78 % on
+  205 real recordings, 45 ms per phrase, speech-recognition memory 1,570 MB → 84 MB, graphics chip ~2 % busy (the GPU
+  version stays as an automatic fallback).
+- **Fix: speech recognition failures** ("no Stream(gpu, 0)"): all MLX work now runs on one thread; live check 205/205.
+  The Whisper fallback unloads after 10 idle minutes (−2.3 GB).
+- **Fix: voice hitching mid-sentence.** Cause: background memory jobs started while long replies were still being
+  spoken, and the voice slows to 0.5–0.8× real time when the language model is busy (2.2× when quiet). Now background
+  jobs wait until the reply has been spoken, and a phrase that is being made slower than real time is played whole —
+  a pause at a comma, never a stall inside a word. On recorded replies: stalls inside phrases 4 (6.6 s) → 0.
+- Speaker recognition stays on the CPU (Core ML put it on the graphics chip at 60 %).
+
+### Photos Echo learns from
+- **Photo collections:** categories (pets, places, nature, home) plus your own. Photos come from a drop folder or from
+  **Google Photos** through Google's own picker: Echo sees only the photos you pick, never the rest of the library.
+- **Echo describes each photo with his own local model** (~11 s per photo, nothing uploaded); you add a caption; it
+  becomes a memory **only when you approve it**. Changing a caption replaces the memory; un-approving hides it.
+- **Remove completely:** deletes every copy and anything learned from a photo, and blocks it from being imported again
+  (for anyone who doesn't want their photos used).
+- **Face Library from Google Photos** (current and younger photos): every face found waits for "This is me".
+
+### Security
+- **DNS-rebinding guard:** Echo's local server only answers requests addressed to 127.0.0.1 / localhost.
+
 ## 0.4.0-alpha (2026-10-31): reads the web, listens to music, learns from 👍/👎, knows your voice in the room
 
 ### Smoother voice and faster replies on 16 GB Macs (fix: choppy voice, slow answers)
