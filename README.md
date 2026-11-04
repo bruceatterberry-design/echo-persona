@@ -38,6 +38,8 @@ if you switch it on; see Privacy.
 **Echo Persona is out of beta.** Every part of the plan is built: voice, face, memories, the Dream Engine link, the
 Dream Observatory and Daydream.
 
+🌙 **New: [a guided tour of the Dream Observatory](docs/DREAM_OBSERVATORY.md)**, every window explained with pictures.
+
 ### Dreaming and daydreaming: two different jobs
 | | **Dreaming** 🌙 | **Daydreaming** ✨ |
 |---|---|---|
