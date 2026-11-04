@@ -2,6 +2,19 @@
 
 Echo Persona 1.0.0 is out of beta. Keep backups of your data.
 
+## Unreleased (on main since 1.0.0)
+
+### Overnight training (dreaming's last step)
+- `scripts/daydream_train.py`, scheduled with `scripts/install_daydream_train.sh` (02:30): when training is switched on,
+  it is 01:00–05:00, nobody has talked to Echo for 30 minutes and there are at least 50 kept examples, it trains a
+  small LoRA on Echo's own model with MLX (MLP blocks only, answers only), bakes it into a copy of the Ollama model
+  (`core/lora_gguf.py`; Ollama 0.40 no longer accepts separate adapters; only the trained tensors change, about
+  +0.5 GB), and measures old and new the same way. The new version is switched on only through the safety gate;
+  otherwise it is deleted. Talking to Echo stops a run.
+- Measured on a Mac mini M4, 16 GB: training peaked at 7.2 GB; a whole run took 12.6 min. In a test with made-up
+  practice data the candidate reasoned better but invented more, so the gate rejected it, as designed.
+- `scripts/daydream_set.py --echo-only --out DIR`: the test set without the tower or Claude.
+
 ## 1.0.0 (2026-11-04): out of beta 🎉
 
 **Echo Persona is out of beta.** The last pieces of the plan are in: dreaming, daydreaming and the training safety gate.
@@ -14,7 +27,7 @@ Echo Persona 1.0.0 is out of beta. Keep backups of your data.
   LoRA adapter trained overnight on the Mac, so Echo's own model shifts towards that accumulated knowledge.
   `core/daydream_train.py` builds the training examples (never Claude's wording), the **safety gate** (a new version
   is only switched on if it is better and not worse on identity, made-up facts or personality) and **"undo
-  training"**. The overnight training run itself is the next release.
+  training"**. The overnight training run followed on main (see Unreleased).
 - **Daydreaming = borrowing brain-power.** Say "daydream" and a hard task: Echo splits it, the tower's bigger model and
   (optionally) Claude draft the parts side by side, Claude points out mistakes, gaps and invented facts, Echo writes
   the answer in his own voice, and Claude checks it once more (`core/daydream.py`). "wake up" stops it; "daydream

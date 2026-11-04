@@ -93,7 +93,8 @@ def last_talk_minutes() -> float | None:
         return None
 
 
-async def one_task(t: dict, local: daydream.Local, dcfg: dict, helper, repeat: int, full_repeat: int) -> dict:
+async def one_task(t: dict, local: daydream.Local, dcfg: dict, helper, repeat: int, full_repeat: int,
+                   echo_only: bool = False, out: Path | None = None) -> dict:
     card = score.new_card(t["task"], "testset", f"{SUITE_VERSION}-{t['id']}-{datetime.now():%H%M%S}",
                           suite=SUITE_VERSION, task_id=t["id"], task=t["task"])
 
@@ -106,7 +107,7 @@ async def one_task(t: dict, local: daydream.Local, dcfg: dict, helper, repeat: i
     card["modes"]["echo"] = score.measure([r[0] for r in runs], t["expect"], [r[1] for r in runs], [r[2] for r in runs],
                                           {"echo": "used"})
     tower_runs, helpers = [], {}
-    for _ in range(repeat):
+    for _ in range(0 if echo_only else repeat):   # --echo-only: never the tower (training gate at night)
         res = await daydream.run(t["task"], local, dcfg, {"tower": daydream.tower_drafter(dcfg)})
         helpers = res.helpers
         if res.ok:
@@ -117,7 +118,7 @@ async def one_task(t: dict, local: daydream.Local, dcfg: dict, helper, repeat: i
     else:
         card["modes"]["echo_tower"] = {"status": f"tower {helpers.get('tower', 'unavailable')}", "runs": 0}
     full = []
-    for _ in range(full_repeat):
+    for _ in range(0 if echo_only else full_repeat):
         res = await daydream.run(t["task"], local, dcfg,
                                  {"tower": daydream.tower_drafter(dcfg), "claude": daydream.claude_drafter(helper)},
                                  daydream.claude_critic(helper), daydream.claude_checker(helper),
@@ -135,7 +136,7 @@ async def one_task(t: dict, local: daydream.Local, dcfg: dict, helper, repeat: i
                            "daydream": full[-1].answer}   # fixed, non-personal tasks: kept on the card for review
     else:
         card["modes"]["daydream"] = {"status": "failed", "runs": 0}
-    score.write(card)
+    score.write(card, out)
     return card
 
 
@@ -145,6 +146,8 @@ async def main() -> int:
     ap.add_argument("--repeat", type=int, default=None, help="runs per task for Echo alone and Echo + tower")
     ap.add_argument("--full-repeat", type=int, default=1, help="runs per task for the full daydream (3 Claude calls each)")
     ap.add_argument("--force", action="store_true", help="run even if someone talked to Echo in the last 10 minutes")
+    ap.add_argument("--echo-only", action="store_true", help="Echo alone only: no tower, no Claude (training gate)")
+    ap.add_argument("--out", default="", help="folder for the cards and summary (default docs/bench/daydream)")
     a = ap.parse_args()
     if (m := last_talk_minutes()) is not None and m < 10 and not a.force:
         print(f"Someone talked to Echo {m:.0f} minutes ago; not starting (Echo's model is shared). Use --force to override.")
@@ -157,12 +160,15 @@ async def main() -> int:
     helper = ClaudeHelper(ROOT / "config" / "claude.json", DATA / "claude-usage.json")   # shares the live daily cap
     repeat = a.repeat or int(dcfg["consistency_runs"])
     tasks = [t for t in TASKS if not a.only or any(t["id"].startswith(x.strip()) for x in a.only.split(","))]
-    need = len(tasks) * a.full_repeat * 3
+    need = 0 if a.echo_only else len(tasks) * a.full_repeat * 3
     print(f"{SUITE_VERSION}: {len(tasks)} tasks, Echo/tower ×{repeat}, full daydream ×{a.full_repeat} "
           f"(up to {need} Claude calls; {helper.used_today()}/{helper.config()['daily_limit']} used today)")
+    out = Path(a.out) if a.out else None
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
     t0, cards = time.time(), []
     for t in tasks:
-        c = await one_task(t, local, dcfg, helper, repeat, a.full_repeat)
+        c = await one_task(t, local, dcfg, helper, repeat, 0 if a.echo_only else a.full_repeat, a.echo_only, out)
         cards.append(c)
         print(c["summary"], flush=True)
 
@@ -175,7 +181,7 @@ async def main() -> int:
                "modes": {m: {k: avg(m, k) for k in ("accuracy", "consistency", "personality", "steadiness", "ms")}
                          for m in score.MODES},
                "invented_caught": sum(c["invented_caught"] for c in cards), "cards": [c["id"] for c in cards]}
-    p = score.CARDS / f"set-{datetime.now():%Y%m%d-%H%M%S}.json"
+    p = (out or score.CARDS) / f"set-{datetime.now():%Y%m%d-%H%M%S}.json"
     p.write_text(json.dumps(summary, indent=1) + "\n")
     print(json.dumps(summary["modes"], indent=1))
     print(f"saved {p}")

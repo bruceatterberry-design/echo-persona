@@ -33,3 +33,4 @@ config/personality.yaml
 config/claude.json
 *.apk
 backups/
+.venv-train/

@@ -26,13 +26,13 @@ daydream:                  # core/daydream.py: extra thinking power for one comp
   tower:                   # the tower's model through the Dream Bridge (never a second connection)
     use: true
     timeout_s: 90
-    max_tokens: 500
+    max_tokens: 500          # per part; tower measured 4×800 ≈ 97 s > 90 s deadline (11-04)
     wake: true               # tower off? send Wake-on-LAN through the bridge and wait for it
-    wake_wait_s: 150         # how long to wait for the tower to boot and link          # per part; tower measured 4×800 ≈ 97 s > 90 s deadline (11-04)
+    wake_wait_s: 150         # how long to wait for the tower to boot and link
   claude:                  # Claude through core/claude_helper.py; ALSO needs jobs.daydream in config/claude.json
     use: true
   consistency_runs: 3      # test-set runs only (scripts/daydream_set.py): repeats per task
-  training:                # saved examples -> LoRA (not built yet)
+  training:                # saved examples -> LoRA, overnight (scripts/daydream_train.py; scripts/install_daydream_train.sh)
     enabled: false
     min_examples: 50
     min_score: 0.8
