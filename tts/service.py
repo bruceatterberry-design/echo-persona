@@ -113,7 +113,7 @@ def synth(text: str, ref: str | None = None) -> bytes:
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
             w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate); w.writeframes(pcm.tobytes())
-        print(f"spoke {len(audio) / rate:.1f}s audio in {time.perf_counter() - t:.1f}s", flush=True)
+        print(f"{time.strftime('%H:%M:%S')} spoke {len(audio) / rate:.1f}s audio in {time.perf_counter() - t:.1f}s", flush=True)
         return buf.getvalue()
 
 
@@ -134,7 +134,7 @@ def synth_stream(text: str):
             first = first or time.perf_counter() - t
             total += a.size / r.sample_rate
             yield r.sample_rate, (np.clip(a, -1, 1) * 32767).astype(np.int16).tobytes()
-        print(f"streamed {total:.1f}s audio, first piece {first or 0:.2f}s, total {time.perf_counter() - t:.1f}s", flush=True)
+        print(f"{time.strftime('%H:%M:%S')} streamed {total:.1f}s audio, first piece {first or 0:.2f}s, total {time.perf_counter() - t:.1f}s", flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):

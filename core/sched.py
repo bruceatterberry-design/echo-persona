@@ -9,6 +9,9 @@ Echo's first word wait 16–17 s; cancelling the job freed Ollama at once (first
   * memory pressure    — when the Mac's free memory is at or below min_free_percent (~14.5 GB of 16 GB used),
                          background work is suspended (conversation is never affected).
   * paused             — the owner can pause all background work (config/scheduler.json or POST /api/scheduler).
+  * dream tower        — turn_started() also tells the Dream Bridge (127.0.0.1:47803) that someone is talking, so
+                         the tower pauses its dreaming. Fire-and-forget on a daemon thread, at most once per 20 s,
+                         0.5 s timeout, errors ignored: Echo never waits for it. ECHO_DREAM_BRIDGE=0 turns it off.
 Everything is observable: snapshot() → /api/scheduler (state, reason, per-job counts, last durations).
 Without a running event loop (tests, scripts) calls run directly, uncancellable — same behaviour as before.
 """
@@ -18,7 +21,9 @@ import asyncio
 import concurrent.futures
 import contextlib
 import json
+import os
 import subprocess
+import urllib.request
 import threading
 import time
 from pathlib import Path
@@ -27,6 +32,26 @@ ROOT = Path(__file__).resolve().parents[1]
 SETTINGS = ROOT / "config" / "scheduler.json"
 DEFAULTS = {"background": True, "quiet_seconds": 20, "min_free_percent": 10}
 TURN_MAX_S = 120
+DREAM_PING_URL = "http://127.0.0.1:47803/conversation/ping"
+DREAM_PING_EVERY_S = 20
+_dream_last = 0.0
+
+
+def _dream_ping() -> None:
+    try:
+        urllib.request.urlopen(urllib.request.Request(DREAM_PING_URL, data=b"", method="POST"), timeout=0.5).close()
+    except Exception:
+        pass   # bridge not installed or not running: nothing to do
+
+
+def notify_dream_bridge() -> bool:
+    """Tell the Dream Bridge someone is talking. Never blocks; returns True if a ping was started."""
+    global _dream_last
+    if os.environ.get("ECHO_DREAM_BRIDGE", "1") == "0" or time.time() - _dream_last < DREAM_PING_EVERY_S:
+        return False
+    _dream_last = time.time()
+    threading.Thread(target=_dream_ping, name="dream-ping", daemon=True).start()
+    return True
 
 
 class Preempted(BaseException):
@@ -87,6 +112,7 @@ class Scheduler:
         with self.lock:
             self.turn_open_until = time.time() + TURN_MAX_S
             victims = list(self.inflight.values())
+        notify_dream_bridge()
         n = 0
         for name, fut in victims:
             if fut.cancel():

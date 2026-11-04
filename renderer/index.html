@@ -35,6 +35,14 @@
   .meta { font-size: 11px; color: var(--dim); margin-top: 4px; }
   .trainhint { position: absolute; bottom: 80px; left: 12px; max-width: calc(50% - 135px); font-size: 11px; line-height: 1.35; color: var(--dim); text-align: left; }
   .trainhint b { color: var(--speak); font-weight: 600; }
+  .dayhint { bottom: 6px; left: 50%; transform: translateX(-50%); max-width: 90%; text-align: center; white-space: nowrap; }
+  .dayhint.on { color: #b79cff; }
+  #ddBadge { display: flex; gap: 6px; align-items: center; color: #b79cff; font-weight: 600; }
+  #ddBadge[hidden] { display: none; }
+  #ddDot { width: 9px; height: 9px; border-radius: 50%; background: #b79cff; box-shadow: 0 0 8px #b79cff;
+           animation: ddblink 1s ease-in-out infinite; }
+  @keyframes ddblink { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+  @media (prefers-reduced-motion: reduce) { #ddDot { animation-duration: 2.5s; } }
   .m.tested { border: 2px solid var(--speak); }
   .votes { margin-top: 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 13px; }
   .votes button, .choices button { font-size: 15px; padding: 4px 12px; border-radius: 8px; cursor: pointer; }
@@ -77,8 +85,9 @@
   <canvas id="face" width="720" height="720" aria-hidden="true"></canvas>
   <div id="meter" title="Microphone level (line = trigger level)" style="position:absolute;bottom:62px;left:50%;transform:translateX(-50%);width:180px;height:6px;border:1px solid var(--line);border-radius:3px;display:none;overflow:hidden"><div id="meterBar" style="height:100%;width:0;background:var(--accent)"></div><div id="meterThr" style="position:absolute;top:0;bottom:0;width:2px;background:var(--think)"></div></div>
   <div id="trainHint" class="trainhint" aria-live="polite"></div>
+  <div id="dayHint" class="trainhint dayhint" aria-live="polite" hidden></div>
   <label id="debugWrap" style="position:absolute;bottom:80px;left:50%;transform:translateX(-50%);display:none"><input type="checkbox" id="debugHear"> Show what I hear (testing)</label>
-  <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span></div>
+  <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span><span id="ddBadge" title="Daydream is on: say “wake up” to stop" hidden><span id="ddDot"></span>daydream</span></div>
 </section>
 <section id="side">
   <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/photos.html" target="_blank" style="font-size:12px;color:var(--accent)">Photos</a><a href="/memories.html" target="_blank" style="font-size:12px;color:var(--accent)">My memories</a><a href="/voices.html" target="_blank" style="font-size:12px;color:var(--accent)">Who’s talking</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
@@ -300,7 +309,19 @@ requestAnimationFrame(draw);
 
 // ---------- state + chat ----------
 const $ = id => document.getElementById(id);
-function setState(s) { S.state = s; $('stateText').textContent = s; $('dot').style.background = colors[s] || colors.idle; }
+function setState(s) {
+  const was = S.state; S.state = s; $('stateText').textContent = s; $('dot').style.background = colors[s] || colors.idle;
+  // 2026-11-03 (the owner): when I talk over music, the music goes softer (Echo lowers the YouTube tab) and I'm louder
+  try {   // (music is declared further down; this can run before it exists while the page loads)
+    if (music && (s === 'speaking') !== (was === 'speaking')) ws.send(JSON.stringify({ type: 'duck', on: s === 'speaking' }));
+  } catch {}
+}
+const MUSIC_BOOST = 1.8;   // my voice while music plays (a compressor keeps it from distorting)
+function voiceBoost(on) {
+  if (!V.boost) return;
+  const t = V.ctx.currentTime; V.boost.gain.cancelScheduledValues(t);
+  V.boost.gain.setTargetAtTime(on ? MUSIC_BOOST : 1, t, 0.08);
+}
 function add(text, cls, meta) {
   const d = document.createElement('div'); d.className = 'm ' + (cls||''); d.textContent = text;
   if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
@@ -315,13 +336,31 @@ function trainingHint(m) {   // small reminder left of "Show what I hear", below
                                b('"Train Echo"'), '. ', b('"Stop testing"'), ' to end.');
   else h.append('To improve my answers, say ', b('"use Claude to evaluate Echo"'), '.');
 }
+function daydreamHint(m) {   // Daydream on/off + how to start or stop it (core/daydream.py; only on the owner's Mac)
+  const h = $('dayHint'); h.hidden = false; h.textContent = '';
+  const b = t => { const x = document.createElement('b'); x.textContent = t; return x; };
+  h.classList.toggle('on', m.state !== 'idle');
+  $('ddBadge').hidden = m.state === 'idle';   // blinking dot next to the status text while a daydream is on
+  if (m.state === 'working') h.append('💭 Daydream ON: thinking with extra help… say ', b('"wake up"'), ' to stop.');
+  else if (m.state === 'waiting') h.append('💭 Daydream ON: tell me the task, or say ', b('"wake up"'), '.');
+  else h.append('Daydream off. For a hard task, say ', b('"daydream"'), ' and the task; ', b('"daydream report"'), ' for scores.');
+}
 function sendText(q, extra) {   // as if typed (training buttons and replays use this too)
   if (!q || !ws || ws.readyState !== 1) return;
   stopSpeaking(); add(q, 'you' + (extra && extra.replay_of ? ' tested' : ''));
   ws.send(JSON.stringify(Object.assign({ text: q }, extra || {}))); setState('thinking');
 }
-function addVotes(el, fid) {   // testing mode: 👍 / 👎 (+ what was wrong) under a reply (core/trainer.py)
-  if (!el || !fid) return;
+function addVotes(el, fid, kind) {   // 👍 / 👎 (+ what was wrong) under a reply: testing mode (core/trainer.py),
+  if (!el || !fid) return;           // or kind 'daydream': a daydream answer (core/daydream_score.py score card)
+  if (kind === 'daydream') {
+    const row = document.createElement('div'); row.className = 'votes';
+    for (const [icon, v, msg] of [['👍', 'up', '👍 Thanks, noted on the score card.'], ['👎', 'down', '👎 Noted on the score card.']]) {
+      const b = document.createElement('button'); b.textContent = icon; b.title = 'Rate this daydream answer';
+      b.onclick = () => { ws.send(JSON.stringify({ type: 'daydream_vote', ddid: fid, vote: v })); row.textContent = msg; };
+      row.appendChild(b);
+    }
+    el.appendChild(row); $('log').scrollTop = 1e9; return;
+  }
   el.classList.add('tested');
   const row = document.createElement('div'); row.className = 'votes';
   const up = document.createElement('button'), down = document.createElement('button');
@@ -487,7 +526,9 @@ async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
   if (!V.ctx) {
     V.ctx = new AudioContext(); V.nextTime = 0;
     V.an = V.ctx.createAnalyser(); V.an.fftSize = 1024; V.an.smoothingTimeConstant = 0;  // drives the mouth shapes
-    V.an.connect(V.ctx.destination);
+    V.boost = V.ctx.createGain(); V.boost.gain.value = music ? MUSIC_BOOST : 1;   // after the mouth analyser: louder
+    V.comp = V.ctx.createDynamicsCompressor(); V.comp.threshold.value = -10; V.comp.ratio.value = 6;   // voice ≠ wider mouth
+    V.an.connect(V.boost); V.boost.connect(V.comp); V.comp.connect(V.ctx.destination);
     if (V.ctx.state === 'suspended') await V.ctx.resume().catch(() => {});
     if (V.ctx.state !== 'running') throw new Error('audio blocked');
   }
@@ -590,6 +631,7 @@ function connect() {
       else add(m.text, '', m.expression);
       if (pendingSources) { showSources(live || $('log').lastElementChild, pendingSources); pendingSources = null; }
       if (m.fid) addVotes(live || $('log').lastElementChild, m.fid);
+      else if (m.ddid) addVotes(live || $('log').lastElementChild, m.ddid, 'daydream');
       if (live && useOwn() && V.failed !== true) {
         if (V.failed === 'pending-system') { V.failed = true; speakSystem(V.full); } else voiceFeed('', true);
       } else speak(m.text);
@@ -598,11 +640,14 @@ function connect() {
     if (m.type === 'sources') { pendingSources = m.sources; }
     if (m.type === 'music') startMusic(m.url, m.vid);
     if (m.type === 'music_stop') endMusic(false);
+    if (m.type === 'note') add(String(m.text || ''), 'note');
+    if (m.type === 'hear') m.on ? hearStart() : hearStop();
     if (m.type === 'photo') showPhoto(m.url);
     if (m.type === 'photo_close') hidePhoto();
     if (m.type === 'choices') { addChoices(m.options || []); }
     if (m.type === 'history' && m.training) trainingHint(m.training);
     if (m.type === 'training') trainingHint(m);
+    if (m.type === 'daydream') daydreamHint(m);
 
     if (m.type === 'replay') {   // once I've finished saying "here it is again", send the owner's words again
       const t0 = Date.now();
@@ -794,6 +839,7 @@ async function sendAudio(chunks, m) {
     }
     if (!text) { if (m !== 'wake') setState('idle'); return; }
     add(text, 'you', 'spoken'); setState('thinking'); ws.send(JSON.stringify({ text, speaker: j.speaker }));   // who, by voice
+    if ((music || hear) && convo) convoEnding = true;   // music playing: one question per “Hey Echo” (song words aren't him)
   } catch (e) { if (m !== 'wake') { add('I couldn’t make out that recording.', 'err'); setState('idle'); } }
 }
 $('micBtn').onclick = () => recording ? stopRec() : startRec('direct');
@@ -852,28 +898,79 @@ $('listen').onchange = async () => {
   if (!(await openMic())) { $('listen').value = 'ptt'; return; }
   setMicIndicator();
 };
-// Music (the owner, 2026-10-31): a song Echo plays opens in a small window he controls. The mic is off while it plays
-// (Echo hears the song from YouTube itself, not through the mic) and comes back in its previous mode when that window
-// closes: when the song ends Echo closes it; if the owner closes it early, Echo notices within a second.
-let music = null;   // {win, vid, before, poll}
+// Music (the owner, 2026-10-31): a song Echo plays opens in a small window. 2026-11-03 (the owner): while music plays the mic
+// listens only for "Hey Echo" (song words aren't taken as him talking, but he can still ask "Hey Echo, what's playing?");
+// push-to-talk stays push-to-talk. YouTube's opener policy makes this page see the window as "closed" within a second,
+// so the page only tells Echo; Echo checks Chrome's tabs and sends music_stop when the music has really ended.
+let music = null;   // {win, vid, before, poll, told}
 function startMusic(url, vid) {
   if (music) endMusic(false, true);
   const w = window.open(url, 'echo-music', 'popup,width=960,height=600');
   if (!w) { ws.send(JSON.stringify({ type: 'music_failed', url, vid })); return; }   // blocked: Echo opens Chrome instead
-  const before = mode();
+  const before = music_before ?? mode();
+  music_before = before;
   if (recording) { recording = false; recBuf = []; }
-  convo = false;
-  if (before !== 'ptt') { $('listen').value = 'ptt'; closeMic(); }
-  music = { win: w, vid, before, poll: setInterval(() => { if (music && music.win.closed) endMusic(true); }, 1000) };
-  add('🎵 The mic is off while the music plays. It comes back when the music window closes.', 'note');
+  convo = false; convoEnding = false; awakeUntil = 0;
+  if (before !== 'ptt') { $('listen').value = 'wake'; setMicIndicator(); }   // not saved: his own choice comes back after
+  music = { win: w, vid, before, told: false, poll: setInterval(() => {
+    if (music && !music.told && music.win.closed) { music.told = true; ws.send(JSON.stringify({ type: 'music_closed', vid: music.vid })); }
+  }, 1000) };
+  voiceBoost(true);
+  add(before === 'ptt' ? '🎵 Music is playing.' : '🎵 While the music plays I only listen for “Hey Echo”.', 'note');
 }
+let music_before = null;   // the listening mode from before the music (kept across one song following another)
 function endMusic(byUser, quiet) {
   if (!music) return;
   const m = music; music = null; clearInterval(m.poll);
+  if (quiet) return;   // another song is starting right away: stay in music mode
+  music_before = null;
+  if (!hear) voiceBoost(false);
+  if (S.state === 'speaking') { try { ws.send(JSON.stringify({ type: 'duck', on: false })); } catch {} }
   try { if (!m.win.closed) m.win.close(); } catch {}
-  if (m.before !== 'ptt') { $('listen').value = m.before; $('listen').onchange(); }
-  if (!quiet) add('🎙 The mic is back on.', 'note');
+  if (m.before !== 'ptt') { $('listen').value = m.before; $('listen').onchange(); add('🎙 I’m listening normally again.', 'note'); }
   if (byUser) ws.send(JSON.stringify({ type: 'music_closed', vid: m.vid }));
+}
+// Listening WITH the owner/the loved one through the room mic (2026-11-03, core/hearing.py). A second, RAW mic stream (no echo
+// cancelling / noise suppression / auto gain: those would eat the music) at 22,050 Hz; every 4 s the piece goes to
+// Echo, who turns it into numbers in memory. Pieces while Echo himself is speaking are dropped. The normal mic
+// listens only for "Hey Echo" meanwhile, like during music.
+let hear = null;   // {stream, ctx, proc, buf, len, before, timer, quietUntil}
+async function hearStart() {
+  if (hear) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false,
+                                                                  autoGainControl: false, channelCount: 1 } });
+  } catch { add('I can’t reach the microphone to listen with you. Allow microphone access for this page.', 'err'); return; }
+  const ctx = new AudioContext({ sampleRate: 22050 });
+  const src = ctx.createMediaStreamSource(stream), mute = ctx.createGain(); mute.gain.value = 0;
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const before = music ? null : mode();
+  hear = { stream, ctx, proc, buf: [], len: 0, before, quietUntil: 0 };
+  proc.onaudioprocess = e => {
+    if (!hear) return;
+    if (S.state === 'speaking') { hear.quietUntil = performance.now() + 600; hear.buf = []; hear.len = 0; return; }
+    if (performance.now() < hear.quietUntil) return;
+    const b = new Float32Array(e.inputBuffer.getChannelData(0)); hear.buf.push(b); hear.len += b.length;
+    if (hear.len >= 4 * ctx.sampleRate) {
+      const out = new Float32Array(hear.len); let o = 0; for (const x of hear.buf) { out.set(x, o); o += x.length; }
+      hear.buf = []; hear.len = 0;
+      fetch('/api/hearing/chunk', { method: 'POST', body: out.buffer }).then(r => r.json())
+        .then(j => { if (j && j.active === false) hearStop(true); }).catch(() => {});
+    }
+  };
+  src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+  if (before && before !== 'ptt') { $('listen').value = 'wake'; convo = false; awakeUntil = 0; setMicIndicator(); }
+  voiceBoost(true);
+  add('🎧 Listening with you through the microphone (nothing is recorded). Say “Hey Echo, stop listening” to end.', 'note');
+}
+function hearStop(quiet) {
+  if (!hear) return;
+  const h = hear; hear = null;
+  try { h.proc.disconnect(); h.stream.getTracks().forEach(t => t.stop()); h.ctx.close(); } catch {}
+  if (!music) voiceBoost(false);
+  if (h.before && h.before !== 'ptt' && !music) { $('listen').value = h.before; $('listen').onchange(); }
+  if (!quiet) add('🎧 I’ve stopped listening through the microphone.', 'note');
 }
 window.addEventListener('beforeunload', () => { try { music && music.win.close(); } catch {} });
 // A photo Echo remembers (2026-11-03): "Can you show me the picture?" shows it over the face until clicked or

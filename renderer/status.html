@@ -92,7 +92,8 @@ async function load() {
 }
 const JOBS = [['personality', 'Personality updates', 'sends your own recorded words'],
   ['condense', 'Personality summary', 'sends the traits you approved'],
-  ['summaries', 'Conversation notes', 'sends conversations: only with the OK of the people you talk with']];
+  ['summaries', 'Conversation notes', 'sends conversations: only with the OK of the people you talk with'],
+  ['daydream', 'Daydream helper', 'sends only the task you give a daydream']];
 async function setClaude(body) {
   await fetch('/api/claude', {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}); load();
 }

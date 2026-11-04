@@ -1,6 +1,39 @@
 # Changelog
 
-Echo Persona is beta software (out of alpha since 1.0.0): versions may still change things without a migration path. Keep backups of your data.
+Echo Persona 1.0.0 is out of beta. Keep backups of your data.
+
+## 1.0.0 (2026-11-04): out of beta 🎉
+
+**Echo Persona is out of beta.** The last pieces of the plan are in: dreaming, daydreaming and the training safety gate.
+
+### Dreaming 🌙 and daydreaming ✨: two different jobs
+- **Dreaming = learning.** Every evening a second PC (the "tower") works through what has piled up in Echo's
+  intelligence engine (memories, conversations, reflections, your 👍/👎) with its own model, and sends back
+  suggestions over the encrypted **Dream Bridge** (`dream_bridge/`). Nothing changes in Echo until it passes his
+  checks and, where it matters, your approval; core identity is never changed. The last step is fine-tuning: a small
+  LoRA adapter trained overnight on the Mac, so Echo's own model shifts towards that accumulated knowledge.
+  `core/daydream_train.py` builds the training examples (never Claude's wording), the **safety gate** (a new version
+  is only switched on if it is better and not worse on identity, made-up facts or personality) and **"undo
+  training"**. The overnight training run itself is the next release.
+- **Daydreaming = borrowing brain-power.** Say "daydream" and a hard task: Echo splits it, the tower's bigger model and
+  (optionally) Claude draft the parts side by side, Claude points out mistakes, gaps and invented facts, Echo writes
+  the answer in his own voice, and Claude checks it once more (`core/daydream.py`). "wake up" stops it; "daydream
+  report" shows score cards (Echo alone vs Echo + tower vs full daydream, `core/daydream_score.py`,
+  `scripts/daydream_set.py`); a sleeping tower is woken with Wake-on-LAN first. First test: the full daydream got
+  **3 of 3 tasks right where Echo alone got 42%**, and caught invented facts on every task. Off and hidden unless you
+  switch it on (`config/echo.example.yaml`, "daydream" job in `config/claude.json`).
+- **The Dream Observatory** runs on the tower and shows the engine working (Live Brain, Dream Journal, Goal
+  Constellation, Memory Connections, Personality Evolution, Model Communication, Daydream), so nothing Echo does
+  while you're away is a black box. The tower program is not published yet; this repository has the Mac half.
+
+### Also new
+- **Listen with me** (`core/hearing.py`): Echo listens to music in the room through the microphone, corrects for the
+  room, and recognises songs from their sung words (an optional lyric lookup sends words only, never audio). Audio
+  stays in memory; speech is skipped.
+- **Music follow-along:** Echo follows the YouTube tab itself, so he knows what is playing when YouTube moves on to
+  the next song; "another song by them", "a different one" and songs he suggested ("Perhaps …?") are played.
+- **Dream links in memory** (`memory/dreamlinks.py`): connections between memories Echo already has, made by a dream
+  and approved by you. They add understanding, never new memories, and fade when unused.
 
 ## 1.0.0-beta (2026-11-03): out of alpha, thinks before it speaks
 

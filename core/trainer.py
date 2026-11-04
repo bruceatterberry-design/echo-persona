@@ -31,6 +31,10 @@ from typing import Callable
 MAX_LESSONS = 30
 SELF = "echo"   # speaker of things Echo said on his own (after a song…): fixable, but there are no words to replay
 LESSON_CHARS = 400
+# Dream insights (Echo Dream Engine, 2026-11-03): general understanding distilled from synthetic dreams, approved by
+# the owner. Never memories. Kept small so Echo stays fast: at most 3 active, 200 characters each.
+MAX_INSIGHTS = 3
+INSIGHT_CHARS = 200
 START = re.compile(r"\b(?:use|ask|get)\s+claude\s+to\s+(?:evaluate|test|check|grade)\s+(?:echo|ecco|eco|you|echo)\b", re.I)
 TRAIN = re.compile(r"^\W*(?:(?:hey|ok|okay)\s+)?(?:echo[,.]?\s+)?train\s+(?:echo|ecco|eco|yourself|echo)\W*$", re.I)
 STOP_TRAIN = re.compile(r"^\W*(?:stop|end|cancel|quit)\s+training\W*$", re.I)
@@ -386,6 +390,33 @@ class Trainer:
         items.append({"id": max([x["id"] for x in items], default=0) + 1, "text": text.strip()[:LESSON_CHARS],
                       "from_entry": entry, "added": time.strftime("%Y-%m-%d %H:%M"), "active": True})
         self._save_lessons(items)
+
+    def add_insight(self, text: str, source: str, approved_by: str) -> dict:
+        """A general insight from the Dream Engine becomes a lesson (not a memory). the owner approved it first."""
+        text = " ".join(text.split())
+        if not 10 <= len(text) <= INSIGHT_CHARS:
+            raise ValueError(f"an insight must be 10-{INSIGHT_CHARS} characters")
+        items = self.lessons()
+        if any(x.get("source") == source for x in items):
+            raise ValueError("that insight is already a lesson")
+        active = [x for x in items if x.get("kind") == "insight" and x.get("active", True)]
+        if len(active) >= MAX_INSIGHTS:
+            raise OverflowError(f"Echo already has {MAX_INSIGHTS} dream insights; switch one off first")
+        les = {"id": max([x["id"] for x in items], default=0) + 1, "text": text, "kind": "insight", "source": source,
+               "from_entry": None, "added": time.strftime("%Y-%m-%d %H:%M"), "active": True,
+               "taught_by": f"dream insight (synthetic dreams), approved by {approved_by}"}
+        self._save_lessons(items + [les])
+        return les
+
+    def drop_insight(self, source: str) -> bool:
+        items = self.lessons()
+        for x in items:
+            if x.get("kind") == "insight" and x.get("source") == source and x.get("active", True):
+                x["active"] = False
+                x["dropped"] = time.strftime("%Y-%m-%d %H:%M")
+                self._save_lessons(items)
+                return True
+        return False
 
     def undo_lesson(self) -> str:
         items = self.lessons()

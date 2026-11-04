@@ -100,6 +100,7 @@ class Turn:
     hits: list = field(default_factory=list)               # web_search results (search.Hit), best first
     calls: list[dict] = field(default_factory=list)       # name, host, ok, why, chars, ms (no content)
     used_chars: int = 0
+    live: set[str] = field(default_factory=set)            # 2026-11-03: _key() of pages open in Chrome: read rendered
     # Stage 6b shadow (core/skills.py): the user's own words, the link a no-LLM shortcut would pick after page_links,
     # and whether the model picked the same one. Recorded only; nothing acts on it.
     question: str = ""
@@ -207,7 +208,13 @@ def read_webpage(args: dict, turn: Turn) -> str:
     room = _budget(turn, RESEARCH_PAGE_CHARS if turn.research else PAGE_CHARS)
     if room < 400:
         return "NOT OPENED: no room left for more page text in this answer. Answer from what you have."
-    page = jsbrowser.read_smart(url, max_chars=200_000)
+    page = None
+    if _key(url) in turn.live:   # a page I opened in Chrome: read it as Chrome shows it (weather.com fills in by script)
+        try:
+            page = jsbrowser.read_page(url, max_chars=200_000)
+        except (web.FetchError, web.UnsafeAddress):
+            page = None
+    page = page or jsbrowser.read_smart(url, max_chars=200_000)
     body, cut = focus(page.text, str(args.get("question") or ""), room)
     turn.used_chars += len(body)
     turn.saw_links(page.url, page.links)

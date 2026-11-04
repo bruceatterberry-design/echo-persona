@@ -12,7 +12,7 @@ from memory.store import MemoryStore
 
 def test_play_listen_along_then_talk(tmp_path, monkeypatch):
     opened, listened, asked = [], [], []
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
     monkeypatch.setattr(browser.subprocess, "run", lambda args, **k: opened.append(args[-1]))
     song = music.Info(id="aQnW-MxAU6U", url="u", title="Steely Dan - Do It Again", duration=0.1)
 
@@ -46,7 +46,9 @@ def test_play_listen_along_then_talk(tmp_path, monkeypatch):
 
 
 def test_closing_the_music_window_early(tmp_path, monkeypatch):
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    import core.server
+    monkeypatch.setattr(core.server, "EARLY_CLOSE_S", 0.0)
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
     song = music.Info(id="aQnW-MxAU6U", url="u", title="Steely Dan - Do It Again", duration=300)
     monkeypatch.setattr(music, "listen", lambda vid, **kw: music.Result(True, "", song, {
         "bpm": 123, "notes_per_second": 2.5, "brightness_hz": 2000, "dynamic_range_db": 8, "key": "G major"}, kind="listened"))

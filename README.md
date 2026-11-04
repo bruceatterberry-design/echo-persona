@@ -30,9 +30,47 @@ if you switch it on; see Privacy.
 - **Android Collector app (optional):** guided daily sessions that record your voice and face video on your phone, and
   copy to the Mac over a USB cable only (the app has no internet permission).
 
-> **✅ Out of alpha: now in beta.** Echo Persona 1.0.0-beta is feature-complete for everyday use and covered by 716
-> automated tests, but it has so far been tested on one Mac. Expect some rough edges, keep backups of your recordings
-> (`scripts/backup_dataset.sh`), and please report problems.
+> **🎉 Out of beta: 1.0.0.** Echo Persona is complete and covered by 902 automated tests. It has so far been
+> used on one Mac, so keep backups of your recordings (`scripts/backup_dataset.sh`) and please report problems.
+
+## What's new in 1.0.0 🎉 Out of beta
+
+**Echo Persona is out of beta.** Every part of the plan is built: voice, face, memories, the Dream Engine link, the
+Dream Observatory and Daydream.
+
+### Dreaming and daydreaming: two different jobs
+| | **Dreaming** 🌙 | **Daydreaming** ✨ |
+|---|---|---|
+| When | every evening, by itself | only when asked: "daydream" + a hard task |
+| Where | a second PC (the "tower") with its own model, over Echo's memories | Echo on the Mac + the tower's bigger model + (optionally) Claude |
+| What it's for | **learning**: reinforcement and fine-tuning, so Echo's own model gradually fits everything gathered in his intelligence engine | **borrowing brain-power**: harnessing outside LLMs for one hard question and feeding the result back to the Mac, in Echo's own voice |
+| What changes | Echo himself, slowly and only through checks | one answer, right now |
+
+- **Dreaming** is how Echo learns. At night the tower works through what has piled up (memories, conversations,
+  reflections, your 👍/👎) and sends back suggestions and training examples. The last step is fine-tuning: a small
+  LoRA adapter trained overnight on the Mac, so the weights of Echo's own model shift towards that knowledge and
+  personality. A new version is only switched on if it beats the old one and is not worse on identity, made-up facts
+  or personality; "undo training" always goes back. Claude's wording never goes into the training data.
+- **Daydreaming** ✨ is how Echo thinks harder in the moment: he splits the task, the tower's model and Claude draft the
+  parts side by side, Claude hunts for mistakes and invented facts, and Echo writes the answer himself. In the first
+  test the full daydream got **3 of 3 tasks right where Echo alone got 42%**. "wake up" stops it, "daydream report"
+  shows the scores, and a sleeping tower is woken first.
+
+### The Dream Observatory (on the tower)
+A window on the tower that shows the engine working, so nothing Echo does while you're away is a black box: **Live
+Brain** (a 3D brain lit by the current stage, plus a "Daydream active" box), **Dream Journal**, **Goal
+Constellation**, **Memory Connections**, **Personality Evolution** (every proposed change, with evidence; core identity
+is never changed) and **Model Communication** (every message between the tower and the Mac).
+
+**Optional Claude account:** with your own Claude account switched on, Claude drafts, critiques and checks each
+daydream. It sees only the task text, never your memories, and has a daily cap. If it's off, Echo carries on with the
+tower and himself.
+
+> **What's in this repository:** the Mac half: Echo, the encrypted Dream Bridge (`dream_bridge/`), Daydream
+> (`core/daydream*.py`) and the training safety gate. The tower's Dream Engine and Observatory are a separate program
+> that is not published yet. Daydream is **off and hidden** unless you set `daydream.enabled` and your Mac's id in
+> `config/echo.yaml` (copy `config/echo.example.yaml`) and switch on the "daydream" job in `config/claude.json`.
+> Also new: **listen with me** (Echo listens to music in the room with you and recognises songs from their words).
 
 ## What's new in 1.0.0-beta 🔥 Hot!
 

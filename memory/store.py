@@ -250,6 +250,8 @@ class MemoryStore:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        from memory import dreamlinks
+        self.db.executescript(dreamlinks.SCHEMA)   # dream links between existing memories (Echo Dream Engine)
         self._migrate()
 
     def _migrate(self) -> None:

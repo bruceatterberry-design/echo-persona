@@ -6,6 +6,7 @@ import time
 from logging.handlers import RotatingFileHandler
 
 import asyncio
+import concurrent.futures
 import json
 import subprocess
 import os
@@ -22,7 +23,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response, Streami
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from core import browser, music, permissions, tools, trainer as training
+from core import browser, hearing, music, permissions, tools, trainer as training
 from core import workspace as cws
 from core import controller
 from core import executive
@@ -291,6 +292,10 @@ def scrub_identity(reply: str) -> str:
 VOICE_YES = re.compile(r"^\W*(?:yes|yeah|yep|yup|it'?s me|it is|that'?s me|sure is|of course)\b", re.I)
 
 
+# following the music in Chrome (2026-11-03): look every 5 s; first 15 s the window is still opening; at most 4 hours
+FOLLOW_EVERY, FOLLOW_GRACE, FOLLOW_MAX = 5.0, 15.0, 4 * 3600
+EARLY_CLOSE_S = 4.0   # a "closed" from my page this soon after opening is YouTube's opener policy, not the owner
+
 def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = None,
                store: MemoryStore | None = None, stt: STTBackend | None = None,
                studio: Studio | None = None, faces: FaceLibrary | None = None,
@@ -380,6 +385,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     # kept here, not per connection (the window reconnects; a relayed message is its own connection).
     pending_offer: dict = {}
     last_opened: dict = {}   # 2026-11-02: what I opened last in Chrome ({"host", "name", "at"}), for "close that"
+    last_play: dict = {}     # 2026-11-03: the song I played last ({"artist", "vid", "at"}), for "a different song by them"
     last_photo: dict = {}    # 2026-11-03: the photo we were last talking about ({"sha", "at"}), for "show me the picture"
     # CA 2.0 Phase 2: what I was in the middle of survives a restart (core/state.py), each item only while fresh
     cstate = CognitiveState(Path(store.path).parent / "state.json")
@@ -420,6 +426,31 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         log.info("lessons changed: instructions reloaded")
     trainer = training.Trainer(Path(store.path).parent / "training.sqlite", lessons_path, ROOT / "docs" / "TRAINING_REQUESTS.md",
                                helper, instructions=lambda: prompt["text"], on_lessons=reload_lessons)
+
+    from core import daydream   # Daydream (2026-11-04): the owner's development Mac only; hidden everywhere else
+    dd_cfg = daydream.load_config(daydream.CONFIG)
+    dd_on = daydream.available(dd_cfg)
+    dd_local = daydream.Local(cfg.llm.host, cfg.llm.model, {"temperature": cfg.llm.temperature, **cfg.llm.options},
+                              lambda: prompt["text"], think=dd_cfg["local_think"], timeout_s=dd_cfg["task_timeout_s"])
+    log.info("daydream %s", "available" if dd_on else "off")
+    from core import daydream_score, daydream_train
+    dd_examples = daydream_train.Examples() if dd_on else None
+    dd_activity = {"at": 0.0}   # last message from anyone: score-card comparisons wait for quiet
+
+    async def dd_quiet(seconds: float = 60) -> None:
+        while time.time() - dd_activity["at"] < seconds:
+            await asyncio.sleep(5)
+
+    async def dd_compare(res) -> None:
+        """After the owner has his answer: score Echo alone and Echo + tower on the same task (score card, step 3)."""
+        try:
+            card = await daydream_score.compare_live(res, dd_local, daydream.merge_prompt, dd_quiet)
+            log.info("daydream score card %s: %s", res.id, card.get("summary"))
+            if dd_examples is not None:   # step 5: a training example, kept or left out with the reason
+                ex = await asyncio.to_thread(dd_examples.consider, res, card, dd_cfg["training"]["min_score"])
+                log.info("daydream example %s: include=%s (%s)", res.id, ex["include"], ex["reason"])
+        except Exception as e:  # noqa: BLE001  (a score card must never disturb Echo)
+            log.warning("daydream score card failed: %s", type(e).__name__)
 
     async def warm_stt():  # load speech recognition in the background so the first voice turn is fast
         try:
@@ -523,6 +554,11 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     await asyncio.to_thread(stt.release_idle_fallback)
                 except Exception as e:  # noqa: BLE001
                     log.warning("whisper unload failed: %s", type(e).__name__)
+            try:   # the music-splitting model (part 2 of listening with the owner) only while it's being used
+                if await asyncio.to_thread(hear.release_idle):
+                    log.info("hearing: music-splitting model let go after 10 idle minutes")
+            except Exception as e:  # noqa: BLE001
+                log.warning("hearing release failed: %s", type(e).__name__)
             if time.time() - last_turn["at"] < 20 or not SCHED.quiet() or not hasattr(backend, "warm"):
                 continue
             try:
@@ -1602,6 +1638,58 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         """CA 2.0 Phase 9: what Echo would ask about next and why (scores are bookkeeping, not feelings)."""
         return initiative.report(store, curiosity, learning)
 
+    class InsightIn(BaseModel):
+        text: str = Field(min_length=10, max_length=training.INSIGHT_CHARS)
+        source: str = Field(pattern=r"^dream-insight:[A-Za-z0-9_.:-]{1,80}$")
+        approved_by: str = Field(default="owner", max_length=40)
+
+    @app.post("/api/lessons/insight")
+    def add_insight(body: InsightIn):
+        """Dream Bridge: an approved general insight becomes a lesson (never a memory). Max 3 active, 200 chars."""
+        try:
+            return trainer.add_insight(body.text, body.source, body.approved_by)
+        except OverflowError as e:
+            raise HTTPException(409, str(e))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+
+    @app.delete("/api/lessons/insight/{source}")
+    def drop_insight(source: str):
+        return {"dropped": trainer.drop_insight(source)}
+
+    class DreamLinkIn(BaseModel):
+        a: int
+        b: int
+        source: str = Field(pattern=r"^dream:[A-Za-z0-9_.:;-]{1,200}$")
+        approved_by: str = Field(default="owner", max_length=40)
+
+    @app.post("/api/memory/dream_link")
+    def add_dream_link(body: DreamLinkIn):
+        """Dream Bridge: an approved dream connection between two EXISTING memories (never a new memory)."""
+        from memory import dreamlinks
+        try:
+            return dreamlinks.add(store.db, body.a, body.b, body.source, by=f"{body.approved_by}:dream")
+        except OverflowError as e:
+            raise HTTPException(409, str(e))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+
+    @app.delete("/api/memory/dream_link/{a}/{b}")
+    def remove_dream_link(a: int, b: int):
+        from memory import dreamlinks
+        return {"removed": dreamlinks.remove(store.db, a, b)}
+
+    @app.get("/api/daydream/report")
+    def daydream_report():
+        if not dd_on:
+            raise HTTPException(404)
+        return daydream_score.report()
+
+    @app.get("/api/memory/dream_links")
+    def dream_links():
+        from memory import dreamlinks
+        return {"links": dreamlinks.listing(store.db)}
+
     @app.get("/api/development")
     def development_report():
         """CA 2.0 Phase 8: does each lesson the owner taught work? Before vs since, from Echo's real conversation (local,
@@ -1812,6 +1900,15 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         except Exception:
             pass
 
+    async def daydream_hint(sock: WebSocket, state: str) -> None:
+        """The small line in Echo's window: is Daydream on, and how to start or stop it (only where it exists)."""
+        if not dd_on:
+            return
+        try:
+            await sock.send_json({"type": "daydream", "state": state})
+        except Exception:
+            pass
+
     async def show_step(sock: WebSocket, step: "training.Step") -> None:
         """Training conversation (core/trainer.py): say it, offer buttons, replay the owner's words, or wait for Claude."""
         while step:
@@ -1839,6 +1936,29 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     # core/music.py: "listen to this <YouTube link>" → approved genres/artists only (config/music.json), one at a time
     music_list = ROOT / "config" / "music.json"
     music_lock = asyncio.Lock()
+    # 2026-11-03: listening WITH the owner/the loved one through the room mic (core/hearing.py; audio in memory only)
+    def lyric_lookup(phrase: str) -> list[str]:
+        """Part 2 (the owner: "lyric words only"): a few sung words → DuckDuckGo → result titles. Audited."""
+        from core import search
+        t0 = time.perf_counter()
+        try:
+            hits = search.search(f"{phrase} lyrics", limit=6)
+            outcome = "ok"
+        except Exception as e:  # noqa: BLE001
+            hits, outcome = [], type(e).__name__
+        tool_audit("lyric_lookup", "duckduckgo.com", "listening with me", outcome, len(phrase),
+                   round((time.perf_counter() - t0) * 1000))
+        return [h.title for h in hits]
+
+    hear = hearing.Hearing(Path(store.path).parent / "hearing",
+                           speaker_scores=lambda a: speakers.scores(a) if speakers.available else {},
+                           stt_sync=getattr(stt, "transcribe_sync", None), may_split=lambda: SCHED.quiet(),
+                           lookup=lyric_lookup, voice_embed=lambda a: speakers.embed(a) if speakers.available else None)
+    hear_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="hearing")
+
+    def song_print_saved(info, y) -> None:
+        title, artist = hearing.title_artist(info)
+        hear.library.add(title, artist, hearing.song_print(y), vid=info.id)
 
     async def tell_windows(text: str, expression: str = "neutral", why: str = "something I said on my own") -> None:
         """Something Echo says on his own (e.g. after listening): shown, spoken and kept in the conversation.
@@ -1854,7 +1974,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 pass
 
     quiet = {"until": 0.0}         # no "tell me about your life" questions until then (after commands, during songs)
-    along: dict = {"task": None, "closed": None}   # the song I'm listening along to (only the newest one)
+    along: dict = {"task": None, "closed": None, "vid": None, "title": ""}   # the song I'm listening along to (newest only)
 
     def hush(seconds: float = 300) -> None:
         quiet["until"] = max(quiet["until"], time.time() + seconds)
@@ -1869,7 +1989,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 res = await asyncio.to_thread(
                     music.listen, vid, list_path=music_list, tmp_root=ROOT / "data" / "tmp" / "music", learner=learner,
                     classify=music.ollama_classifier(cfg.llm.host, cfg.llm.model), stt_call=stt_call, by=by,
-                    along=along_mode)
+                    along=along_mode, on_audio=song_print_saved, needs_print=lambda v: hear.library.by_vid(v) is None)
             except Exception as e:  # noqa: BLE001
                 log.warning("listen job crashed: %s", type(e).__name__)
                 res = music.Result(False, "Something went wrong while I was listening, sorry.")
@@ -1881,11 +2001,69 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         res = await run_listen(vid, by)
         await tell_windows(res.say, "smiling" if res.ok else "neutral", "I said this after listening to a song you sent")
 
+    async def follow_tabs(vid: str, by: str, started: float, closed: asyncio.Event, tabs: list,
+                          first: asyncio.Task) -> "music.Result | None":
+        """2026-11-03: follow the song in Chrome itself. YouTube plays the next song on its own (and its opener policy
+        makes my page think the music window closed at once), so every few seconds I look at the YouTube tabs: a new
+        video there → I listen along to that one too; no YouTube tab any more → the music is over. Returns the
+        result for the last song that played."""
+        jobs: dict[str, asyncio.Task] = {vid: first}
+        current, gone, seen = vid, 0, False
+        # older songs' listening jobs finish in the background (one at a time, music_lock)
+        while time.time() - started < FOLLOW_MAX:
+            vids = [v for v in (music.video_id(u) for u, _t in tabs) if v]
+            seen = seen or bool(vids)
+            if not seen and time.time() - started > FOLLOW_GRACE:
+                return None   # my window isn't among the tabs I can see (Echo's own Chrome): use the song's length
+            if vids:
+                gone = 0
+                if current not in vids and time.time() - started > FOLLOW_GRACE:   # YouTube went on to another song
+                    # (autoplay, or the owner clicked one); not in the first seconds, while my window is still opening
+                    current = vids[0]
+                    title = next((browser.tab_song(t) for u, t in tabs if music.video_id(u) == current), "")
+                    along.update(vid=current, title=title)
+                    log.info("music moved on: now id=%s", current)
+                    if current not in jobs:
+                        jobs[current] = asyncio.create_task(run_listen(current, by, along_mode=True))
+            elif time.time() - started > FOLLOW_GRACE:
+                gone += 1
+                if gone >= 2:   # twice in a row, so a page reload doesn't end it
+                    break
+            hush(600)
+            try:   # my page's "closed" signal only makes me look sooner; Chrome decides
+                await asyncio.wait_for(closed.wait(), timeout=FOLLOW_EVERY)
+                closed.clear()
+            except asyncio.TimeoutError:
+                pass
+            got = await asyncio.to_thread(browser.youtube_tabs)
+            if got is None:   # can't ask Chrome any more: treat it as stopped
+                break
+            tabs = got
+        return await jobs[current]
+
     async def listen_along(vid: str, by: str, started: float, closed: asyncio.Event) -> None:
         """the owner/the loved one asked me to play a song: I listen to it too, stay quiet while it plays, then talk about it.
-        When it ends I close the music window (the mic comes back); if they close it first, I talk right away."""
+        When it ends I close the music window (the mic comes back); if they close it first, I talk right away.
+        If I can see Chrome's tabs, I follow what's really playing there instead of the song's length."""
         try:
-            res = await run_listen(vid, by, along_mode=True)
+            along.update(vid=vid, title="", started=started)
+            await asyncio.sleep(min(1.0, FOLLOW_EVERY))   # let the music window open first
+            tabs = await asyncio.to_thread(browser.youtube_tabs)
+            first = asyncio.create_task(run_listen(vid, by, along_mode=True))
+            first.add_done_callback(lambda t: along.update(title=t.result().info.title)
+                                    if not t.cancelled() and t.result().info and along.get("vid") == vid else None)
+            res = await follow_tabs(vid, by, started, closed, tabs, first) if tabs is not None else None
+            if res is not None:
+                along.update(vid=None, title="")
+                for w in windows[-1:]:
+                    try:
+                        await w.send_json({"type": "music_stop"})
+                    except Exception:
+                        pass
+                await asyncio.sleep(1.5)
+                await tell_windows(music.after_song(res), "smiling", "I said this when the music I listened along to ended")
+                return
+            res = await first
             if not closed.is_set() and res.info and res.info.duration:
                 left = res.info.duration - (time.time() - started) + 4
                 hush(left + 300)
@@ -1899,10 +2077,49 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     await w.send_json({"type": "music_stop"})   # song over: close it, mic back on
                 except Exception:
                     pass
+            along.update(vid=None, title="")
             await asyncio.sleep(1.5)   # let the mic settle before I speak
             await tell_windows(music.after_song(res), "smiling", "I said this when a song I listened along to ended")
         except asyncio.CancelledError:   # another song was asked for: that one takes over
             pass
+
+    duck_state = {"warned": False}
+
+    async def duck(on: bool) -> None:
+        got = await asyncio.to_thread(browser.duck_music, on)
+        if got == "js_off" and not duck_state["warned"]:   # once per run: tell the owner how to switch it on
+            duck_state["warned"] = True
+            log.info("music duck: Chrome's 'Allow JavaScript from Apple Events' is off")
+            for w in windows[-1:]:
+                try:
+                    await w.send_json({"type": "note", "text": "To make the music softer while I talk, Chrome needs one "
+                                       "setting: View > Developer > Allow JavaScript from Apple Events."})
+                except Exception:
+                    pass
+        elif got not in ("ok", "none"):
+            log.info("music duck: %s", got)
+
+    async def now_playing() -> str:
+        """2026-11-03 "What is playing right now?": read it from Chrome itself (YouTube may have moved on by itself)."""
+        tabs = await asyncio.to_thread(browser.youtube_tabs)
+        if tabs is None:
+            return ("I can't see Chrome's tabs just now, so I can't tell what's playing. macOS may need to let me "
+                    "control Google Chrome: System Settings, Privacy and Security, Automation.")
+        if along.get("vid") and not any(music.video_id(u) == along["vid"] for u, _t in tabs):
+            known = along.get("title") or ""
+            return ((f"The last song I put on was {music.Info(id='', url='', title=known).label()}" if known else
+                     "I put a song on in my music window") +
+                    ", but I can't see that window, so if YouTube has moved on to another song I can't tell which.")
+        if not tabs:
+            return "Nothing is playing on YouTube in Chrome right now."
+        mine = along.get("vid")
+        url, title = next(((u, t) for u, t in tabs if mine and music.video_id(u) == mine), tabs[0])
+        song = browser.tab_song(title)
+        if not song:
+            return "There's a YouTube video open in Chrome, but I can't read its name yet."
+        label = music.Info(id=music.video_id(url) or "", url=url, title=song).label()
+        more = f" There are {len(tabs)} YouTube videos open; that's the one in front." if len(tabs) > 1 and not mine else ""
+        return f"It's {label}.{more}"
 
     async def watch_video(vid: str, started: float, closed: asyncio.Event) -> None:
         """A video (not music): no listening along; when it ends I close its window so the mic comes back on."""
@@ -1928,9 +2145,42 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         if along["task"] and not along["task"].done():
             along["task"].cancel()
         along["closed"] = asyncio.Event()
+        along["started"] = time.time()
         await sock.send_json({"type": "music", "url": url, "vid": vid})
         along["task"] = asyncio.create_task(listen_along(vid, by, time.time(), along["closed"]) if along_on
                                             else watch_video(vid, time.time(), along["closed"]))
+
+    @app.post("/api/hearing/chunk")
+    async def hearing_chunk(request: Request):
+        """A few seconds of raw room-mic audio (float32, 22,050 Hz) while listening with the owner/the loved one. This Mac only;
+        turned into numbers in memory, never written to disk."""
+        if not request.client or request.client.host not in ("127.0.0.1", "::1", "testclient"):   # (tests' client)
+            raise HTTPException(403, "local only")
+        if not hear.active():
+            return {"active": False}
+        body = await request.body()
+        if len(body) % 4 or len(body) > 4 * hearing.SR * 20:
+            raise HTTPException(400, "bad audio")
+        y = np.frombuffer(body, dtype="<f4").copy()
+        got = await asyncio.get_running_loop().run_in_executor(hear_pool, hear.feed, y)
+        if got.get("new") and got.get("song"):
+            log.info("hearing: recognised (conf %.2f)", got.get("confidence", 0))
+            for w in windows[-1:]:
+                try:
+                    await w.send_json({"type": "note", "text": f"🎧 I think this is {got['song']}."})
+                except Exception:
+                    pass
+        if got.get("guess"):
+            log.info("hearing: guessed a song from the words")
+            for w in windows[-1:]:
+                try:
+                    await w.send_json({"type": "note", "text": f"🎧 From the words I made out, it might be {got['guess']}. "
+                                       "Ask me what I hear."})
+                except Exception:
+                    pass
+        if "room_off_db" in got:
+            log.info("hearing: room tuned (%d), was off by %.2f dB", hear.room.count, got["room_off_db"])
+        return {k: v for k, v in got.items() if k in ("active", "skipped", "why", "song", "confidence", "new")}
 
     @app.post("/api/say")
     async def say_test(body: SayIn, request: Request):
@@ -1966,9 +2216,61 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             except Exception:
                 pass
         windows.append(sock)
+        if hear.active():   # a reloaded window picks the listening back up
+            await sock.send_json({"type": "hear", "on": True})
         await sock.send_json({"type": "history", "turns": store.recent_turns(MAX_TURNS),
                               "training": {"testing": trainer.testing, "busy": trainer.busy, "wrong": len(trainer.pending())}})
         asked: dict[str, str] = (cstate.get("which_one") or {}).get("answers") or {}   # my last "which one?" (restored)
+        dds = daydream.Session()
+        await daydream_hint(sock, dds.state)
+
+        async def plain_reply(say: str, expression: str = "neutral", fid: int | None = None) -> None:
+            store.add_turn("assistant", say)
+            await sock.send_json({"type": "reply", "text": say, "expression": expression,
+                                  "intensity": 0.3 if expression != "neutral" else 0.0, **({"fid": fid} if fid else {})})
+            SCHED.spoken_until(time.time() + speech_seconds(say))
+            await sock.send_json({"type": "state", "state": "idle"})
+
+        async def daydream_job(task: str, spk: str | None) -> None:
+            """Runs beside the conversation, so "wake up" still gets through while Echo is thinking."""
+            try:
+                use_claude = dd_cfg["claude"]["use"]   # + jobs.daydream in config/claude.json, checked on each call
+                drafters = {}
+                if dd_cfg["tower"]["use"]:
+                    drafters["tower"] = daydream.tower_drafter(dd_cfg)   # through the Dream Bridge (rev e)
+                if use_claude:
+                    drafters["claude"] = daydream.claude_drafter(helper)
+                dds.result = daydream.Result(task=task)
+                res = await asyncio.wait_for(daydream.run(
+                    task, dd_local, dd_cfg, drafters, daydream.claude_critic(helper) if use_claude else None,
+                    daydream.claude_checker(helper) if use_claude else None, on_event=dds.report, res=dds.result),
+                    dd_cfg["task_timeout_s"])
+                log.info("daydream done ok=%s parts=%d helpers=%s issues=%d ms=%s", res.ok, len(res.parts),
+                         res.helpers, len(res.issues), res.ms.get("total"))
+                if res.ok:   # the leading [smiling] tag and *face cues* become the face, never spoken (schema.py)
+                    sp = StreamParser()
+                    sp.feed(res.answer)
+                    said = sp.finish()
+                    fid = trainer.record(task, said.text, spk)
+                    store.add_turn("assistant", said.text + "\n\n" + daydream.LEAVE)
+                    await sock.send_json({"type": "reply", "text": said.text + "\n\n" + daydream.LEAVE,
+                                          "expression": said.expression, "intensity": 0.3, "ddid": res.id,
+                                          **({"fid": fid} if fid else {})})
+                    SCHED.spoken_until(time.time() + speech_seconds(said.text))
+                    await sock.send_json({"type": "state", "state": "idle"})
+                    asyncio.create_task(dd_compare(res))
+                else:
+                    await plain_reply(daydream.FAILED)
+            except asyncio.CancelledError:
+                raise   # "wake up": already answered
+            except Exception as e:  # noqa: BLE001  (timeout, model gone: never take the conversation down)
+                log.warning("daydream failed: %s", type(e).__name__)
+                try:
+                    await plain_reply(daydream.FAILED)
+                except Exception:  # noqa: BLE001
+                    pass
+            dds.state, dds.job = "idle", None
+            await daydream_hint(sock, "idle")
 
         async def perform(act, spk) -> str:
             """Carry out an open/play Action (a command, or a "yes" to my offer); returns what to say."""
@@ -1982,14 +2284,18 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 return say if n else f"I don't see {act.say.removeprefix('Closing ').rstrip('.')} open in Chrome."
             hush()
             who_by = spk if spk and spk != "unknown" else "owner"
-            top = await asyncio.to_thread(browser.youtube_top, act.play, act.random) if act.play else None
+            top = await asyncio.to_thread(browser.youtube_top, act.play, act.random, act.exclude,
+                                          act.avoid) if act.play else None
             if top and (vid := music.video_id(top)):   # play in my own window, mic off (music: listen along too)
                 await start_music(sock, top, vid, who_by, along_on=not act.video)
+                if not act.video:
+                    last_play.update(artist=browser.last_artist(act.play, browser.music_artists()), vid=vid,
+                                     at=time.time())
             elif (act.url is not None or act.script) and not await asyncio.to_thread(browser.run, act):
                 say = "I couldn't open that just now. Is Google Chrome installed?"
             elif act.url:
                 last_opened.update(host=browser._host(act.opened or act.url), name=act.say.removeprefix("Opening ").rstrip("."),
-                                   at=time.time())
+                                   at=time.time(), url=act.opened or act.url)
                 cstate.set("opened", dict(last_opened))
             log.info("browser action url=%s script=%s play=%s", bool(act.url), bool(act.script), bool(act.play))
             return say
@@ -2014,8 +2320,13 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
             while True:
                 msg = await sock.receive_json()
                 if msg.get("type") == "music_closed":   # the owner closed the music window: talk about it now
+                    if time.time() - along.get("started", 0) < EARLY_CLOSE_S:
+                        continue   # YouTube's opener policy makes my page see the window "closed" ~1 s after it opens
                     if along.get("closed"):
                         along["closed"].set()
+                    continue
+                if msg.get("type") == "duck":   # I'm talking over music: softer music while I speak (2026-11-03)
+                    asyncio.create_task(duck(bool(msg.get("on"))))
                     continue
                 if msg.get("type") == "music_failed":   # the window couldn't open one: open it in Chrome instead
                     url = str(msg.get("url", ""))
@@ -2033,6 +2344,14 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     if step:
                         await show_step(sock, step)
                     continue
+                if msg.get("type") == "daydream_vote" and dd_on:   # 👍/👎 on a daydream answer → its score card
+                    did, v = str(msg.get("ddid", ""))[:64], str(msg.get("vote", ""))
+                    ok = await asyncio.to_thread(daydream_score.vote, did, v)
+                    if dd_examples is not None and v in ("up", "down"):
+                        await asyncio.to_thread(dd_examples.vote, did, v, dd_cfg["training"]["min_score"])
+                    log.info("daydream vote %s ok=%s", msg.get("vote"), ok)
+                    continue
+                dd_activity["at"] = time.time()
                 replay_of = msg.get("replay_of") if isinstance(msg.get("replay_of"), int) else None
                 text = str(msg.get("text", "")).strip()[:4000]
                 # who said it, from the voice (spoken messages only); anything that isn't a known profile is ignored
@@ -2091,6 +2410,52 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 elif speaker == "unknown" and (w := voice["who"]) and now - w["at"] < STICKY_S:
                     speaker, w["at"] = w["name"], now                  # unclear phrase, same conversation: still them
                     log.info("voice: unclear, still %s (same conversation)", speaker)
+                if dd_on and replay_of is None and daydream.is_undo_training(text):   # back to the last good model
+                    store.add_turn("user", text, speaker)
+                    back = await asyncio.to_thread(daydream_train.Versions().undo)
+                    if back:
+                        await plain_reply(f"Okay. I'm going back to my previous model, {back['to']}. I'll restart in a "
+                                          f"few seconds; give me half a minute.", "attentive")
+                        daydream_train.restart_core()
+                    else:
+                        await plain_reply("There's no training to undo: I'm still on the model I started with.")
+                    done(rec, "daydream_undo_training", speaker)
+                    continue
+                if dd_on and replay_of is None and daydream.is_report(text):   # "daydream report": the trends
+                    store.add_turn("user", text, speaker)
+                    say = await asyncio.to_thread(lambda: daydream_score.report_text(daydream_score.report()))
+                    await plain_reply(say, "attentive")
+                    done(rec, "daydream_report", speaker)
+                    continue
+                if dd_on and replay_of is None:   # "daydream" / "wake up" (core/daydream.py)
+                    starts, task = daydream.parse_start(text)
+                    if dds.state != "idle" and daydream.is_stop(text):
+                        if dds.state == "working" and dds.result:   # the Observatory sees it end
+                            asyncio.create_task(dds.report(dds.result, "stopped"))
+                        dds.leave()
+                        store.add_turn("user", text, speaker)
+                        await plain_reply(daydream.LEAVE_STOPPED)
+                        await daydream_hint(sock, "idle")
+                        done(rec, "daydream_stop", speaker)
+                        continue
+                    if dds.state == "waiting" and not starts:
+                        starts, task = True, text
+                    if starts:
+                        hush()
+                        store.add_turn("user", text, speaker)
+                        if dds.state == "working":
+                            await plain_reply("I'm still daydreaming about the last one. Say \"wake up\" to stop it.")
+                        elif not task:
+                            dds.enter(waiting=True)
+                            await plain_reply(daydream.ENTER_ASK, "attentive")
+                        else:
+                            dds.enter(waiting=False)
+                            await plain_reply(daydream.ENTER, "attentive")
+                            await sock.send_json({"type": "state", "state": "thinking"})
+                            dds.job = asyncio.create_task(daydream_job(task, speaker))
+                        await daydream_hint(sock, dds.state)
+                        done(rec, "daydream", speaker)
+                        continue
                 if replay_of is None and (step := trainer.handle(text)):   # testing / "Train Echo" / yes-no / pick a fix
                     hush()
                     store.add_turn("user", text, speaker)
@@ -2101,6 +2466,35 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 if (genre := music.add_request(text)):
                     added = await asyncio.to_thread(music.add_genre, music_list, genre)
                     music_say = (f"Okay, {genre} is on my music list now." if added else f"{genre.capitalize()} is already on my music list.")
+                elif hearing.asks_start(text):   # 2026-11-03: listen with me through the room mic
+                    hear.start(speaker if speaker and speaker != "unknown" else "owner", along.get("vid") or "")
+                    await sock.send_json({"type": "hear", "on": True})
+                    asyncio.get_running_loop().run_in_executor(hear_pool, hear.warm)   # ready for the first split
+                    n = hear.library.count()
+                    music_say = ("Okay, I'm listening with you through the microphone. I'll stay quiet; ask me what I "
+                                 "hear anytime, and say \"stop listening\" when we're done." +
+                                 ("" if n else " I don't know any songs by ear yet, so tell me what one is and I'll remember it."))
+                elif hear.active() and hearing.asks_stop(text):
+                    sess = hear.stop()
+                    await sock.send_json({"type": "hear", "on": False})
+                    music_say = hear.summary(sess) if sess else "Okay."
+                    asyncio.get_running_loop().run_in_executor(hear_pool, hear.release_now)   # GPU back to my voice
+                elif (hear.active() and hear.session and hear.session.guess and browser.is_yes(text) and
+                      "Is that right?" in next((t["content"] for t in reversed(store.recent_turns(2))
+                                                if t["role"] == "assistant"), "")):
+                    music_say = await asyncio.get_running_loop().run_in_executor(hear_pool, hear.confirm_guess)
+                elif hear.active() and (who := hearing.teaching_who(text)):   # part 3: "that's Donald Fagen singing"
+                    music_say = await asyncio.get_running_loop().run_in_executor(hear_pool, hear.teach_who, *who)
+                elif hear.active() and (role := hearing.asks_who(text)):     # "who's on drums?"
+                    music_say = await asyncio.get_running_loop().run_in_executor(hear_pool, hear.who, role)
+                elif hear.active() and (taught := hearing.teaching(text)):
+                    music_say = await asyncio.get_running_loop().run_in_executor(hear_pool, hear.teach, *taught)
+                elif hear.active() and (hearing.asks_what(text) or browser.asks_now_playing(text)):
+                    music_say = await asyncio.get_running_loop().run_in_executor(hear_pool, hear.describe_now)
+                elif (recap := hear.recap(text)):   # 2026-11-04: "who was that?" right after "stop listening"
+                    music_say = recap
+                elif browser.asks_now_playing(text):   # 2026-11-03: from Chrome, not from what I last opened
+                    music_say = await now_playing()
                 elif (vid := music.listen_request(text)):
                     busy = music_lock.locked()
                     asyncio.create_task(listen_job(vid, speaker if speaker and speaker != "unknown" else "owner"))
@@ -2124,8 +2518,9 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 if cstate.data.get("offer"):
                     cstate.offer(None)
                 from_offer = offer if offer and browser.is_yes(text) else None
+                recent_words = " ".join(t["content"] for t in store.recent_turns(6))   # "them" = who we talked about
                 act = (from_offer or (asked and browser.answer(text, asked)) or browser.parse_close(text, last_opened)
-                       or browser.parse_play(text, speaker) or browser.parse(text))
+                       or browser.parse_play(text, speaker, recent=recent_words, last_play=last_play) or browser.parse(text))
                 if asked:
                     cstate.set("which_one", None)
                 asked = {}
@@ -2307,10 +2702,18 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 # core/tools.py: on web questions Echo may read pages himself (addresses the owner gave only)
                 turn = None
                 tset = permissions.load_settings(tools_cfg)
-                if tools_on and tset["enabled"] and hasattr(backend, "chat_stream_tools") and tools.wants_tools(text):
+                # 2026-11-03: "what do you see on the weather channel?" → read the page I opened (as Chrome shows it)
+                page_q = None if not_done else browser.page_to_read(text, last_opened)
+                if tools_on and tset["enabled"] and hasattr(backend, "chat_stream_tools") and (
+                        tools.wants_tools(text) or page_q):
                     turn = tools.Turn(research=tools.wants_research(text), follow=tset["follow_links"],
                                       max_pages=tset["max_pages"])
                     turn.allow(text, *[t["content"] for t in store.recent_turns(6)])
+                    if page_q:
+                        turn.allow(page_q[0])
+                        turn.live.add(tools._key(page_q[0]))
+                        messages[-1]["content"] += "\n\n" + browser.page_note(page_q[1])
+                        rec.hints.append("read_open_page")
                     turn.question = text   # Stage 6b shadow: the shortcut ranks links by the user's own words
                     xplan.fired("tools")
                     messages[-1]["content"] += "\n\n" + tools.HINT
@@ -2328,7 +2731,9 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                                                        if not (check_voice and n == cfg.owner_name)])   # you, <name>?" stays
                     parser.ask(text)   # "blink for me" / "smile for me" happen even if the model forgets
                     t_start, t_first = time.perf_counter(), None
-                    words = (tools.stream_with_tools(backend, messages, turn, prefetch=tools.prefetch_calls(text)) if turn
+                    pre = (tools.prefetch_calls(text) if turn else []) or ([{"function": {"name": "read_webpage", "arguments": {
+                        "url": page_q[0], "question": text}}}] if turn and page_q else [])
+                    words = (tools.stream_with_tools(backend, messages, turn, prefetch=pre) if turn
                              else backend.chat_stream(messages))
                     async for piece in words:
                         t_first = t_first or time.perf_counter()
@@ -2378,7 +2783,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 # "I will open YouTube and play Do It Again") becomes real: kept for a "yes", or done now if I said I'm
                 # doing it right after they said yes. Only things browser/music can really open or play.
                 try:
-                    if not not_done and (o := browser.offer_from_reply(reply.text, speaker)):
+                    if not not_done and (o := browser.offer_from_reply(reply.text, speaker, recent=recent_words + " " + text,
+                                                                       last_play=last_play)):
                         o_act, claim = o
                         if claim and browser.is_yes(text):
                             said = await perform(o_act, speaker)
@@ -2410,6 +2816,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         except WebSocketDisconnect:
             pass
         finally:
+            dds.leave()   # window closed mid-daydream: stop the work
             if sock in windows:
                 windows.remove(sock)
 

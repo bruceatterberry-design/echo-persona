@@ -22,6 +22,9 @@ CATALOGUE = {
     "web_search": ("sends the search words to DuckDuckGo (no account, no cookies) and lists the results", "low", False),
     "listen_music": ("downloads the audio of a YouTube music video the owner/the loved one sent, only approved genres/artists "
                      "(config/music.json), analyses it on this Mac, then deletes the audio", "medium", False),
+    # 2026-11-03 (the owner: "yes, lyric words only"): while listening with the owner/the loved one through the mic
+    "lyric_lookup": ("sends a few words of song lyrics Echo made out through the microphone to DuckDuckGo to find the "
+                     "song's name (never audio, never anything else)", "low", False),
 }
 DEFAULTS = {"enabled": True, "follow_links": "any", "max_pages": 5}
 

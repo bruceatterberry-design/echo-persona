@@ -6,6 +6,8 @@ must be switched on by itself, because each job sends some personal text off the
   personality  the owner's own recorded words (transcripts) -> traits     (their own data)
   condense     the owner's approved traits -> short summary                 (their own data)
   summaries    conversation turns with the loved one -> memory notes             (their words too: off unless they agree)
+  daydream     the task the owner gives a daydream (core/daydream.py) -> drafts + a critique of drafts. Only the task text and
+               the drafts made from it; memories, conversation history and the loved one's words only if "daydream_context" is on
 
 The call runs with no tools, no files, no MCP servers, no settings or memory, from an empty folder, so Claude only sees
 the one prompt. A daily cap protects the owner's Pro plan limits; if the cap is hit or anything fails, Echo goes local.
@@ -23,8 +25,8 @@ import time
 from pathlib import Path
 
 log = logging.getLogger("echo.claude")
-JOBS = ("personality", "condense", "summaries", "training")   # training: core/trainer.py, on only while training
-DEFAULT = {"enabled": False, "model": "sonnet", "timeout_s": 120, "daily_limit": 60,
+JOBS = ("personality", "condense", "summaries", "training", "daydream")   # training: core/trainer.py, on only while training
+DEFAULT = {"enabled": False, "model": "sonnet", "timeout_s": 120, "daily_limit": 60, "daydream_context": False,
            "jobs": {j: False for j in JOBS}}
 
 

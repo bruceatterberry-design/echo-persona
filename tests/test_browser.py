@@ -108,11 +108,11 @@ def test_play_uses_the_configured_account(monkeypatch):
 def test_play_opens_top_video(monkeypatch):
     from core import browser
     opened = []
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
     monkeypatch.setattr(browser.subprocess, "run", lambda args, **k: opened.append(args[-1]))
     assert browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
     assert opened == ["https://www.youtube.com/watch?v=aQnW-MxAU6U"]
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: None)                    # lookup failed → search page
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: None)                    # lookup failed → search page
     browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
     assert "results?search_query=steely+dan" in opened[-1]
 
@@ -165,7 +165,7 @@ def test_a_video_plays_without_listening_along(tmp_path, monkeypatch):
     from core.server import create_app
     from memory.store import MemoryStore
     picked = []
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: picked.append((q, r)) or "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: picked.append((q, r)) or "https://www.youtube.com/watch?v=aQnW-MxAU6U")
     monkeypatch.setattr(music, "listen", lambda *a, **k: pytest.fail("videos are not listened along to"))
     monkeypatch.setattr(music, "fetch_info", lambda vid: music.Info(id=vid, url="u", title="Funny cats", duration=0.1))
     client = TestClient(create_app(PersonaConfig(), EchoBackend(), MemoryStore(tmp_path / "m.sqlite")))

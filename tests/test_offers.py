@@ -28,7 +28,7 @@ class Scripted(EchoBackend):
 def setup(tmp_path, monkeypatch):
     opened = []
     monkeypatch.setattr(browser, "run", lambda a: opened.append(a.url) or True)
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: None)     # music → its YouTube search page
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: None)     # music → its YouTube search page
     monkeypatch.setattr(browser, "music_artists", lambda: ["steely dan"])
 
     def make(replies):

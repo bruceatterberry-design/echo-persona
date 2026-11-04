@@ -319,15 +319,28 @@ def after_song(res: Result) -> str:
 
 
 def listen(vid: str, *, list_path: Path, tmp_root: Path, learner, classify, stt_call: Callable[[np.ndarray], str] | None,
-           by: str = "owner", fetch=fetch_info, download=download_audio, along: bool = False) -> Result:
-    """The whole job (runs in a background thread). Never leaves audio behind unless keep_audio is set."""
+           by: str = "owner", fetch=fetch_info, download=download_audio, along: bool = False,
+           on_audio: Callable[[Info, np.ndarray], None] | None = None,
+           needs_print: Callable[[str], bool] | None = None) -> Result:
+    """The whole job (runs in a background thread). Never leaves audio behind unless keep_audio is set.
+    on_audio(info, y at SR): 2026-11-03, the song print for listening by ear (core/hearing.py); needs_print(vid) says
+    whether a song I've already heard still lacks one (then it's fetched once more just for the print)."""
     t = {"start": time.perf_counter()}
     url = f"https://www.youtube.com/watch?v={vid}"
     if learner.known(url):
         try:
-            seen = fetch(vid) if along else None     # listening along: the length tells me when the song ends
+            seen = fetch(vid) if along or (needs_print and needs_print(vid)) else None   # length: when the song ends
         except Exception:  # noqa: BLE001
             seen = None
+        if seen and on_audio and needs_print and needs_print(vid) and seen.duration <= MAX_SECONDS:
+            folder = tmp_root / vid
+            try:
+                on_audio(seen, decode(download(seen, folder), SR))
+                log.info("song print made for an already-heard song id=%s", vid)
+            except Exception as e:  # noqa: BLE001
+                log.info("song print failed id=%s: %s", vid, type(e).__name__)
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
         return Result(False, "I've already listened to that one. Ask me about it anytime.", seen, kind="already")
     approved = load_list(list_path)
     try:
@@ -356,6 +369,11 @@ def listen(vid: str, *, list_path: Path, tmp_root: Path, learner, classify, stt_
         t["download"] = time.perf_counter()
         y = decode(audio, SR)
         a = analyse(y, SR)
+        if on_audio:
+            try:
+                on_audio(info, y)
+            except Exception as e:  # noqa: BLE001
+                log.info("song print failed id=%s: %s", vid, type(e).__name__)
         t["analyse"] = time.perf_counter()
         words = ""
         if stt_call and approval["genre"] != "classical":

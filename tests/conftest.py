@@ -15,7 +15,8 @@ def no_real_chrome_or_youtube(monkeypatch):
     """Tests never open Chrome, look things up on YouTube or download audio (a test once opened a real video).
     Tests that check these pass their own fakes on top."""
     from core import browser, music
-    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False: None)
+    monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: None)
+    monkeypatch.setattr(browser, "youtube_tabs", lambda: None)   # never asks the real Chrome what's open
     import subprocess
     import types
     monkeypatch.setattr(browser, "subprocess", types.SimpleNamespace(   # only the browser's copy, not Python's own
@@ -55,3 +56,26 @@ def household_names():
     people.configure("Alex", "Sam")
     yield
     people.configure("", "")
+
+
+@pytest.fixture(autouse=True)
+def no_real_music_splitting(monkeypatch):
+    """Tests never load Demucs (core/hearing.py part 2); tests that check splitting pass a fake Separator."""
+    from core import hearing
+
+    def blocked(self, y, sr=hearing.SR):
+        raise RuntimeError("no Demucs in tests")
+    monkeypatch.setattr(hearing.Separator, "split", blocked)
+    monkeypatch.setattr(hearing.Separator, "_load", lambda self: (_ for _ in ()).throw(RuntimeError("no Demucs in tests")))
+
+
+@pytest.fixture(autouse=True)
+def no_real_daydream(tmp_path, monkeypatch):
+    """Daydream (core/daydream.py) is off in tests unless a test switches it on with its own config."""
+    from core import daydream
+    monkeypatch.setattr(daydream, "CONFIG", tmp_path / "no-echo.yaml")
+    monkeypatch.setattr(daydream, "BRIDGE", "http://127.0.0.1:9")   # never the real Dream Bridge / tower
+    from core import daydream_train
+    monkeypatch.setattr(daydream_train, "DATA", tmp_path / "daydream-data")
+    monkeypatch.setattr(daydream_train, "LOG", tmp_path / "training-log.jsonl")
+    monkeypatch.setattr(daydream_train, "restart_core", lambda *a, **k: None)   # never restart the live Echo

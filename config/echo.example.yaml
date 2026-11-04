@@ -15,3 +15,26 @@ llm:
                                # 8-9B 4-bit so the voice and speech recognition fit. Old default: "llama3.1:8b"
   temperature: 0.4             # use 0.7 with llama3.1:8b
   think: false                 # Qwen's thinking mode waits 2-4 minutes before the first word: keep it off
+
+# Daydream (developer option, off and hidden by default; see README 'What's new in 1.0.0')
+daydream:                  # core/daydream.py: extra thinking power for one complex task, on request
+  enabled: false           # off in every copy except the owner's development Mac
+  owner_machine: ""        # this Mac's IOPlatformUUID; Daydream stays hidden on any other machine
+  max_parts: 4             # Echo splits a task into at most this many parts
+  task_timeout_s: 480      # a daydream that takes longer ends and says so (room for waking the tower)
+  local_think: false       # let Echo's model "think" during a daydream (slower, sometimes better)
+  tower:                   # the tower's model through the Dream Bridge (never a second connection)
+    use: true
+    timeout_s: 90
+    max_tokens: 500
+    wake: true               # tower off? send Wake-on-LAN through the bridge and wait for it
+    wake_wait_s: 150         # how long to wait for the tower to boot and link          # per part; tower measured 4×800 ≈ 97 s > 90 s deadline (11-04)
+  claude:                  # Claude through core/claude_helper.py; ALSO needs jobs.daydream in config/claude.json
+    use: true
+  consistency_runs: 3      # test-set runs only (scripts/daydream_set.py): repeats per task
+  training:                # saved examples -> LoRA (not built yet)
+    enabled: false
+    min_examples: 50
+    min_score: 0.8
+    where: mac_overnight
+    keep_versions: 2

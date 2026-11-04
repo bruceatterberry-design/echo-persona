@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from memory import archive
+from memory import archive, dreamlinks
 from memory.entities import Entities, norm
 from memory.store import Memory, MemoryStore
 
@@ -272,6 +272,19 @@ class Retriever:
         if when:   # a time question: keep the conversation's notes in the order they happened
             timed = [h for h in hits if "time" in h.why]
             hits = timed + [h for h in hits if "time" not in h.why]
+        hits = hits[:k]
+        if hits and len(hits) < k:   # dream link (memory/dreamlinks.py): at most one, only if there's room
+            have = {h.memory.id for h in hits}
+            for src, nid, strength in dreamlinks.neighbours(self.db, [h.memory.id for h in hits[:2]], now):
+                if nid in have or nid in exclude:
+                    continue
+                if (m := self.store.get_many([nid]).get(nid)):   # visible memories only
+                    hits.append(Hit(m, hits[-1].score * 0.99, [f"dream link {strength:.2f}"]))
+                    try:
+                        dreamlinks.used(self.db, src, nid, now)
+                    except Exception:
+                        pass   # never let bookkeeping break a reply
+                    break
         facts = {}
         for e in names:   # named: its best facts; "my"/"you": only the kinds of fact the question asks about
             f = self.facts_for(e["id"], question=text)
@@ -297,7 +310,9 @@ def format_for_message(r: Result, store: MemoryStore) -> str:
         parts.append(f"{name}: " + "; ".join(lines))
     for h in r.hits:
         date = time.strftime("%b %-d", time.localtime(happened(store, h.memory)))
-        tag = ("" if h.memory.status == "confirmed" else ", my own note" if h.memory.kind == "summary"
+        dream = any(w.startswith("dream link") for w in h.why)
+        tag = (", it came to mind through a link I made while reflecting" if dream else
+               "" if h.memory.status == "confirmed" else ", my own note" if h.memory.kind == "summary"
                else ", learned from something I was given to read" if h.memory.kind == "knowledge" else ", inferred")
         parts.append(f"{h.memory.content} ({date}{tag})")
     return ("[From my notes, in case it helps. This is all I have on it: if a detail isn't here, I don't know it and "

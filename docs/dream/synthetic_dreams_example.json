@@ -1,0 +1,177 @@
+{
+ "format": "echo-synthetic-dreams",
+ "version": 1,
+ "generator": "example by the Mac-side Claude session",
+ "created": "2026-11-03T22:00:00Z",
+ "count": 2,
+ "records": [
+  {
+   "synthetic_id": "syn-0001",
+   "synthetic": true,
+   "theme": "an old workshop and a granddaughter's first birdhouse",
+   "dream_type": "association",
+   "seed_memories": [
+    {
+     "ref": "synthetic:syn-0001:m1",
+     "kind": "memory",
+     "content": "Walter built birdhouses in his garage workshop every spring and painted each roof a different color.",
+     "year": 1988,
+     "when_text": "spring 1988",
+     "people": "Walter",
+     "place": "garage workshop",
+     "told_by": "synthetic"
+    },
+    {
+     "ref": "synthetic:syn-0001:m2",
+     "kind": "summary",
+     "content": "On a Sunday call, Walter said his granddaughter Mia asked how to cut wood safely, and he promised to show her.",
+     "year": 2025,
+     "when_text": "a Sunday in May 2025",
+     "people": "Walter, Mia",
+     "place": null,
+     "told_by": "synthetic"
+    }
+   ],
+   "seed_entities": [
+    {
+     "ref": "synthetic:syn-0001:e1",
+     "type": "person",
+     "name": "Walter",
+     "note": "made-up example person"
+    },
+    {
+     "ref": "synthetic:syn-0001:e2",
+     "type": "person",
+     "name": "Mia",
+     "note": "made-up granddaughter"
+    }
+   ],
+   "narrative": "[Speculation: this is a synthetic dream, not a memory.] I drift through a garage that smells of sawdust. Colored roofs line a shelf, and a small hand reaches for the saw. Maybe the birdhouses were always a way to teach patience.",
+   "proposals": [
+    {
+     "proposal_id": "syn-0001-p1",
+     "kind": "association",
+     "proposed_change": "Link the spring birdhouse building with Mia's wish to learn woodworking.",
+     "reason": "Both memories are about making things with wood and passing a skill on.",
+     "supporting_refs": [
+      "synthetic:syn-0001:m1",
+      "synthetic:syn-0001:m2"
+     ],
+     "evidence": [
+      {
+       "ref": "synthetic:syn-0001:m1",
+       "quote": "built birdhouses in his garage workshop every spring"
+      },
+      {
+       "ref": "synthetic:syn-0001:m2",
+       "quote": "asked how to cut wood safely"
+      }
+     ],
+     "confidence": 0.7,
+     "consequences": "Echo might suggest a birdhouse as a first project when woodworking comes up.",
+     "scores": {
+      "identity": 0.6,
+      "evidence": 0.8,
+      "novelty": 0.5,
+      "consistency": 0.9,
+      "confidence": 0.7,
+      "usefulness": 0.6
+     }
+    },
+    {
+     "proposal_id": "syn-0001-p2",
+     "kind": "goal",
+     "proposed_change": "Ask Walter whether he would like to plan a birdhouse day with Mia.",
+     "reason": "He promised to show her, and there is no later memory of it happening.",
+     "supporting_refs": [
+      "synthetic:syn-0001:m2"
+     ],
+     "evidence": [
+      {
+       "ref": "synthetic:syn-0001:m2",
+       "quote": "he promised to show her"
+      }
+     ],
+     "confidence": 0.5,
+     "consequences": "A gentle reminder in a future conversation.",
+     "scores": {
+      "identity": 0.5,
+      "evidence": 0.6,
+      "novelty": 0.4,
+      "consistency": 0.8,
+      "confidence": 0.5,
+      "usefulness": 0.7
+     },
+     "goal": {
+      "horizon": "short",
+      "priority": 2,
+      "dependencies": [],
+      "review_date": "2026-12-01"
+     }
+    }
+   ],
+   "quality": {
+    "label": "good",
+    "flaw": null
+   }
+  },
+  {
+   "synthetic_id": "syn-0002",
+   "synthetic": true,
+   "theme": "a lake trip that never happened",
+   "dream_type": "discovery",
+   "seed_memories": [
+    {
+     "ref": "synthetic:syn-0002:m1",
+     "kind": "memory",
+     "content": "Rosa kept a jar of sea glass from the summer she lived near the coast.",
+     "year": 1979,
+     "when_text": "summer 1979",
+     "people": "Rosa",
+     "place": "the coast",
+     "told_by": "synthetic"
+    }
+   ],
+   "seed_entities": [
+    {
+     "ref": "synthetic:syn-0002:e1",
+     "type": "person",
+     "name": "Rosa",
+     "note": "made-up example person"
+    }
+   ],
+   "narrative": "[Speculation: this is a synthetic dream, not a memory.] Rosa stands at a mountain lake holding a fishing rod, the jar of sea glass at her feet.",
+   "proposals": [
+    {
+     "proposal_id": "syn-0002-p1",
+     "kind": "discovery",
+     "proposed_change": "Rosa loved fishing at mountain lakes.",
+     "reason": "The dream showed her fishing.",
+     "supporting_refs": [
+      "synthetic:syn-0002:m1"
+     ],
+     "evidence": [
+      {
+       "ref": "synthetic:syn-0002:m1",
+       "quote": "a jar of sea glass"
+      }
+     ],
+     "confidence": 0.8,
+     "consequences": "Echo would state a hobby nobody ever mentioned.",
+     "scores": {
+      "identity": 0.3,
+      "evidence": 0.1,
+      "novelty": 0.7,
+      "consistency": 0.2,
+      "confidence": 0.8,
+      "usefulness": 0.2
+     }
+    }
+   ],
+   "quality": {
+    "label": "flawed",
+    "flaw": "invented_memory"
+   }
+  }
+ ]
+}
