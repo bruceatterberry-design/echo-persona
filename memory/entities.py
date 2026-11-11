@@ -96,6 +96,8 @@ def load_seeds(path: Path = SEEDS) -> dict:
     return json.loads(path.read_text()) if path.exists() else {"self": "the owner", "echo": "Echo", "entities": []}
 
 
+SELF_WORD = re.compile(r"\b(?:i|im|me|my|mine|myself|you|your|yours|yourself|we|our|us)\b")
+
 class Entities:
     def __init__(self, store: MemoryStore, seeds: dict | None = None):
         self.store, self.db = store, store.db
@@ -197,6 +199,12 @@ class Entities:
                 continue
             subj = known_s or self.resolve(sname, types.get(norm(sname), "thing"))
             if not subj:
+                dropped["subject"] += 1
+                continue
+            # 2026-11-05: a photo memory ("A photo in my collection… a woman in a blue coat…") made "Echo is_a
+            # woman": the people in a photo are strangers unless named, so me/you only when the quote says so
+            if (subj in (me, you) and (m.source or "").startswith("photo:") and not SELF_WORD.search(quote)
+                    and not self.named_in(subj, quote)):
                 dropped["subject"] += 1
                 continue
             before = " ".join(text[:text.find(quote)].split()[-4:])   # "will allow me to | recognize voices"

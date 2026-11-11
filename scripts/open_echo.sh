@@ -11,5 +11,9 @@ for i in {1..180}; do curl -s --max-time 1 127.0.0.1:8765/health >/dev/null && b
 # play Echo's voice without a click first.
 read SW SH <<< "$(osascript -e 'tell application "Finder" to get bounds of window of desktop' | awk -F', ' '{print $3, $4}')"
 SW=${SW:-2560}; SH=${SH:-1080}
+NEW="http://127.0.0.1:8765/?v=$(date +%s)"
 open -na "Google Chrome" --args --user-data-dir="$ROOT/data/chrome-echo" --no-first-run --no-default-browser-check \
-  --app="http://127.0.0.1:8765/?v=$(date +%s)" --window-position=0,0 --window-size=$((SW / 2)),$SH --autoplay-policy=no-user-gesture-required --disable-popup-blocking
+  --app="$NEW" --window-position=0,0 --window-size=$((SW / 2)),$SH --autoplay-policy=no-user-gesture-required --disable-popup-blocking
+# 2026-11-05: reopening left the old Echo windows stacked underneath (3 at once). Close all but the new one.
+sleep 4
+osascript -e "tell application \"Google Chrome\" to close (every window whose URL of active tab contains \"127.0.0.1:8765/?v=\" and URL of active tab is not \"$NEW\")" >/dev/null 2>&1

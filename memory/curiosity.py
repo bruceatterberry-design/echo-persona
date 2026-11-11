@@ -27,13 +27,14 @@ ANSWER_WINDOW_S = 600
 
 class Curiosity:
     def __init__(self, store: MemoryStore, enabled: bool = True, every_minutes: float = 30, min_turns: int = 4,
-                 bank: Path = BANK, answered: set[str] | None = None, extra=None, photos=None):
+                 bank: Path = BANK, answered: set[str] | None = None, extra=None, photos=None, dreams=None):
         self.store, self.enabled = store, enabled
         self.every_s, self.min_turns = every_minutes * 60, min_turns
         self.questions = json.loads(bank.read_text()) if bank.exists() else []
         self.answered = answered or set()   # question ids already answered on the phone
         self.extra = extra or (lambda: [])  # questions the owner approved first (memory/gaps.py, Stage 5b)
         self.photos = photos or (lambda: [])  # CA 2.0 Phase 9: uncaptioned photos, best first (core/initiative.py)
+        self.dreams = dreams or (lambda: [])  # unknowns my dreams found and I agreed to ask about (memory/dreamq.py)
 
     # ---- state ----
     def state(self) -> dict:
@@ -71,6 +72,13 @@ class Curiosity:
             first = []
         if first:
             return first[0]
+        if self.next_kind() != "dream":   # at most every other question is a dream one, so they never crowd out the rest
+            try:
+                dq = [q for q in self.dreams() if q["id"] not in skip]
+            except Exception:  # noqa: BLE001  (dream bridge DB unreadable: just carry on)
+                dq = []
+            if dq:
+                return dq[0]
         left = [q for q in self.questions if q["id"] not in skip]
         if self.next_kind() == "photo" or not left:   # Phase 9: a photo question and a bank question in turn
             try:
@@ -91,8 +99,10 @@ class Curiosity:
         return random.choice([q for q in left if known.get(q["period"], 0) == fewest])
 
     def next_kind(self) -> str:
-        """"photo" if the last question I asked was from the bank (or none yet), else "bank"."""
+        """"photo" if the last question I asked was from the bank (or none yet), else "bank"; "dream" if it was a dream one."""
         last = (self.state().get("last_id") or "")
+        if last.startswith("dream:"):
+            return "dream"
         return "bank" if last.startswith("photo:") else "photo"
 
     def maybe_ask(self, speaker: str | None, text: str, now: float | None = None) -> dict | None:
@@ -108,6 +118,8 @@ class Curiosity:
         if self.pending(now):
             return None
         if not forced and (st["turns"] < self.min_turns or now - st.get("last_asked", 0) < self.every_s):
+            return None
+        if not forced and not lull(text):   # 2026-11-05: wait for a pause, don't cut across what he just brought up
             return None
         return self.next_question()
 
@@ -247,6 +259,16 @@ SELF_PHOTO = ("[{who} just told me the photo is of them (my question: \"{questio
               "in my own words: it's {who} in the photo, and as their digital self that's me as well. {who} is the one "
               "who lived that moment; I know it only from what they tell me, so I don't claim to remember it. I use only "
               "their words and what the photo shows, thank them, and don't ask another question.]")
+
+
+def lull(text: str) -> bool:
+    """A pause in the conversation where my own question fits: a short message (≤ 8 words) that isn't a question and
+    doesn't start something ("I would like to make an app for you, Echo, so that you can see the world." got a photo
+    question about a man in a green jacket on 11-05)."""
+    t = (text or "").strip()
+    return "?" not in t and len(t.split()) <= 8 and not re.search(
+        r"\b(?:i(?:'d| would) like|i want|i'm going to|i am going to|we(?:'re| are) going to|let's|i'm thinking|"
+        r"i was thinking|my plan|i plan|tell me|can you|could you|will you|would you)\b", t, re.I)
 
 
 def is_self_photo(q: dict) -> bool:

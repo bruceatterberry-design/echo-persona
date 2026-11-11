@@ -1,0 +1,4 @@
+{
+ "text_results_to": "",
+ "_note": "Copy to config/echo_calls.json: your own phone number, where Echo texts the answers after calling a business. Blank = no text."
+}

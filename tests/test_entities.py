@@ -121,3 +121,24 @@ def test_pet_facts_the_wrong_way_round_are_turned(store, ents):
     ents.apply(m, {"entities": [{"name": "Biscuit", "type": "pet"}],
                    "facts": [{"subject": "Pat", "predicate": "pet_of", "object": "Biscuit", "quote": "two cats biscuit and pepper"}]}, "t")
     assert [(f["subject"], f["predicate"], f["object"]) for f in ents.about("Biscuit")["facts"]] == [("Biscuit", "pet_of", "Pat")]
+
+
+def test_people_in_a_photo_are_not_echo_or_owner(store, ents):   # 2026-11-05: "Echo is_a woman"
+    m = store.save(Memory(content='A photo in my "Our home" collection. What the photo shows: two smiling people, a man '
+                          'in a red cap on the left and a woman in a blue coat on the right.',
+                          source="photo:be311baefeea4bda"))
+    r = ents.apply(m, {"entities": [], "facts": [
+        {"subject": "Echo", "predicate": "is_a", "object": "woman", "quote": "a woman in a blue coat"},
+        {"subject": "the owner", "predicate": "is_a", "object": "man", "quote": "a man in a red cap on the left"}]}, "test")
+    assert r["kept"] == 0 and r["dropped"]["subject"] == 2
+    m2 = store.save(Memory(content="the owner says: I'm the man in the red cap in this photo.", source="photo:aaaaaaaaaaaaaaaa"))
+    assert ents.apply(m2, {"entities": [], "facts": [
+        {"subject": "the owner", "predicate": "is_a", "object": "man in a red cap", "quote": "I'm the man in the red cap"}]},
+        "test")["kept"] == 1   # said in the first person: kept
+
+
+def test_a_photo_that_names_the_owner_still_counts(store, ents):
+    m = store.save(Memory(content="In this picture the owner is holding his daughter Anna.", source="photo:bbbbbbbbbbbbbbbb"))
+    assert ents.apply(m, {"entities": [{"name": "Anna", "type": "person"}], "facts": [
+        {"subject": "the owner", "predicate": "parent_of", "object": "Anna", "quote": "the owner is holding his daughter Anna"}]},
+        "test")["kept"] == 1

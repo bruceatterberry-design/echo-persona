@@ -90,7 +90,7 @@ def test_conversation_asks_owner_and_queues_his_answer(tmp_path, monkeypatch):
     import memory.curiosity as mcu
     bank = tmp_path / "bank.json"; bank.write_text(json.dumps(QS[:1]))
     monkeypatch.setattr(mcu, "BANK", bank)
-    monkeypatch.setattr(mcu.Curiosity.__init__, "__defaults__", (True, 30, 4, bank, None, None, None))
+    monkeypatch.setattr(mcu.Curiosity.__init__, "__defaults__", (True, 30, 4, bank, None, None, None, None))
     store = MemoryStore(tmp_path / "m.sqlite")
     b = Capture()
     with TestClient(create_app(PersonaConfig(memory_db=str(tmp_path / "m.sqlite"), dataset_root=str(tmp_path / "none")),
@@ -110,7 +110,7 @@ def test_conversation_with_known_owner_voice(tmp_path, monkeypatch):
     import memory.curiosity as mcu
     from tests.test_speaker import FakeSpeakerID, tone
     bank = tmp_path / "bank.json"; bank.write_text(json.dumps(QS[:1]))
-    monkeypatch.setattr(mcu.Curiosity.__init__, "__defaults__", (True, 30, 4, bank, None, None, None))
+    monkeypatch.setattr(mcu.Curiosity.__init__, "__defaults__", (True, 30, 4, bank, None, None, None, None))
     model = tmp_path / "f.onnx"; model.write_bytes(b"x")
     sid = FakeSpeakerID(model, tmp_path / "spk"); sid.enroll("owner", [tone(150)], ["a"]); sid.enroll("loved_one", [tone(300)], ["b"])
     store = MemoryStore(tmp_path / "m.sqlite")
@@ -298,7 +298,7 @@ def test_photo_questions_from_memory_text(tmp_path):
     c, _ = store.add(Memory(content='A photo in my "Cats" collection. the owner says: This is Milo. What the photo shows: '
                             'a gray tabby cat.', source="photo:ghi"))
     d, _ = store.add(Memory(content='A photo in my "Our home" collection. Taken on 3 January 2026 (date from the camera). '
-                            'What the photo shows: A close-up selfie shows a man wearing glasses and a gray hoodie.',
+                            'What the photo shows: A close-up selfie shows a man in a green jacket and a gray hoodie.',
                             source="photo:jkl"))
     qs = {q["memory_id"]: q for q in initiative.photo_questions(store)}
     assert c.id not in qs                                                  # captioned by the owner: nothing to ask
@@ -337,3 +337,53 @@ def test_yes_its_me_on_a_photo_is_an_answer_and_echo_knows_its_the_owner_and_him
     assert c.take_answer("owner", "No.") is not None                      # a plain no answers it too
     c.asked({"id": "b1", "text": "What was your first job?", "period": None})
     assert c.take_answer("owner", "Yes.") is None                         # elsewhere: still needs a real answer
+
+
+# ---- dream questions (memory/dreamq.py, 2026-11-04) ----
+def test_dreamq_reads_bridge_table(tmp_path):
+    import sqlite3
+    from memory import dreamq
+    assert dreamq.questions(tmp_path / "missing.sqlite") == []
+    db = tmp_path / "proposals.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE other (x)"); con.commit()
+    assert dreamq.questions(db) == []          # table not there yet
+    con.execute("CREATE TABLE dream_questions (proposal_id TEXT PRIMARY KEY, text TEXT NOT NULL, queued REAL NOT NULL)")
+    con.execute("INSERT INTO dream_questions VALUES ('p1', 'Where was the red car photo taken?', 1)")
+    con.commit(); con.close()
+    assert dreamq.questions(db) == [{"id": "dream:p1", "text": "Where was the red car photo taken?", "period": None,
+                                     "source": "dream"}]
+
+
+def test_dream_questions_alternate_and_never_repeat(tmp_path):
+    from memory.curiosity import Curiosity
+    from memory.store import MemoryStore
+    store = MemoryStore(tmp_path / "m.sqlite")
+    dq = [{"id": "dream:a", "text": "Where was the red car photo taken?", "period": None},
+          {"id": "dream:b", "text": "Who drove on that July 2022 trip?", "period": None}]
+    c = Curiosity(store, dreams=lambda: dq)
+    q1 = c.next_question(); assert q1["id"] == "dream:a"
+    c.asked(q1)
+    q2 = c.next_question(); assert not q2["id"].startswith("dream:")     # a non-dream question in between
+    c.asked(q2)
+    q3 = c.next_question(); assert q3["id"] == "dream:b"                  # a never asked twice
+    c.asked(q3)
+    c.asked(c.next_question())
+    assert not c.next_question()["id"].startswith("dream:")              # all dream questions used up
+
+
+def test_broken_dream_source_is_ignored(tmp_path):
+    from memory.curiosity import Curiosity
+    from memory.store import MemoryStore
+    c = Curiosity(MemoryStore(tmp_path / "m.sqlite"), dreams=lambda: 1 / 0)
+    assert c.next_question() is not None
+
+
+def test_my_questions_wait_for_a_lull():   # 2026-11-05: a photo question cut across the owner's app idea
+    from memory.curiosity import lull
+    for t in ["No problem.", "Yes, it would.", "It's going well.", "I got some work done this morning."]:
+        assert lull(t), t
+    for t in ["I would like to make an app for you, Echo, so that you can see the world.", "How are you today?",
+              "Let's play some Steely Dan.", "Can you open the weather?",
+              "Well, just remember that we're still two separate individuals, even though you're basically a clone."]:
+        assert not lull(t), t

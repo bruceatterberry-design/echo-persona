@@ -109,6 +109,7 @@ def test_play_opens_top_video(monkeypatch):
     from core import browser
     opened = []
     monkeypatch.setattr(browser, "youtube_top", lambda q, r=False, *_: "https://www.youtube.com/watch?v=aQnW-MxAU6U")
+    monkeypatch.setattr(browser, "_SCREEN", [2560, 1080])
     monkeypatch.setattr(browser.subprocess, "run", lambda args, **k: opened.append(args[-1]))
     assert browser.run(browser.parse_play("play Steely Dan on YouTube", None, []))
     assert opened == ["https://www.youtube.com/watch?v=aQnW-MxAU6U"]
@@ -179,3 +180,12 @@ def test_a_video_plays_without_listening_along(tmp_path, monkeypatch):
         while m["type"] != "music_stop":                     # the video ends: window closed, mic back on, no comment
             m = ws.receive_json()
     assert picked == [("cat video", True)]
+
+
+def test_pages_open_on_the_right_half(monkeypatch):   # 2026-11-05: Echo is the left half of the screen
+    from core import browser
+    opened = []
+    monkeypatch.setattr(browser, "_SCREEN", [2560, 1080])
+    monkeypatch.setattr(browser.subprocess, "run", lambda args, **k: opened.append(args))
+    assert browser.run(browser.Action(say="", url="https://weather.com"))
+    assert "--window-position=1280,0" in opened[0] and "--window-size=1280,1080" in opened[0]

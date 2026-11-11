@@ -79,3 +79,10 @@ def no_real_daydream(tmp_path, monkeypatch):
     monkeypatch.setattr(daydream_train, "DATA", tmp_path / "daydream-data")
     monkeypatch.setattr(daydream_train, "LOG", tmp_path / "training-log.jsonl")
     monkeypatch.setattr(daydream_train, "restart_core", lambda *a, **k: None)   # never restart the live Echo
+
+
+@pytest.fixture(autouse=True)
+def no_real_dream_questions(tmp_path, monkeypatch):
+    """Tests never read the real Dream Bridge question queue (data/dream-bridge/proposals.sqlite)."""
+    from memory import dreamq
+    monkeypatch.setattr(dreamq, "DB", tmp_path / "no-dream-bridge.sqlite")

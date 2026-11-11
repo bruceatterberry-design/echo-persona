@@ -48,6 +48,7 @@ class TurnRecord:
     ecw: dict = field(default_factory=dict)            # UCA2 Phase 2: live workspace snapshot at the end of the turn
     ndas: dict = field(default_factory=dict)           # UCA2 Phase 2: NDAS shadow (retired in CA 2.0 Phase 7: empty)
     exec: dict = field(default_factory=dict)           # CA 2.0 Phase 7: core/executive.py decisions + reasons
+    dialogue: dict = field(default_factory=dict)       # EDIM/awareness Phase 3 (core/edim_link.py): ids + rule names
 
     def judge_plan(self) -> None:
         """command ↔ browser/music, research ↔ llm_tools, chat/memory/reasoning ↔ llm (voice_confirm/trainer:

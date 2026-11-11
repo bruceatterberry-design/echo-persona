@@ -45,6 +45,9 @@ _MEMORY = re.compile(r"\b(?:do you )?remember\b|\bwhat happened\b|\bwho (?:is|wa
                      r"summer|christmas)\b|\bour (?:trip|wedding|house|cats?|dog|family|kids?|son|daughter)\b|"
                      r"\bmy (?:mom|mother|dad|father|brother|sister|wife|husband|son|daughter|"
                      r"grand\w+|first|favou?rite)\b|\bgrow up\b|\bwhen (?:i|we|you) (?:was|were)\b", re.I)
+_PHONE = re.compile(r"\b(?:my )?(?:contacts?|contact list|phone ?book|phone list|address book)\b|"
+                    r"\b(?:send|shoot|write)\b.{0,20}\b(?:a )?(?:text|message)\b|^\W*(?:(?:hey |ok )?echo\W+)?(?:please |can you |could you )?"
+                    r"(?:text|call|message|phone)\s+[A-Z]", re.I)
 _WEB = re.compile(r"\b(?:weather|forecast|news|headlines?|stock price|scores?\b.{0,20}\bgame|latest on|going to (?:rain|snow|storm))\b", re.I)
 _PAST = re.compile(r"\b(?:did|have|had) (?:we|i)\b|\bwhat did (?:we|i|you)\b|\bdid you (?:tell|show|say|make|open|suggest|"
                    r"mind|promise|ask|play|try|remember|learn)\b|\bhave you (?:tried|told|shown|made|opened|learned)\b|"
@@ -64,6 +67,11 @@ def _is_question(t: str) -> bool:
 
 
 _SELF = re.compile(r"^\s*(?:who are you|what(?:'s| is) your name|are you (?:a )?real|what are you)\b", re.I)
+
+
+def phone_request(text: str) -> bool:
+    """Texting/calling someone or his contacts: handled with his own contacts, never a web search."""
+    return bool(_PHONE.search(text or ""))
 
 
 @dataclass
@@ -100,6 +108,9 @@ def classify(text: str, known_names: set[str] | frozenset[str] = frozenset()) ->
     if tools.urls_in(t):
         why.append("address")
         return d("research")
+    if _PHONE.search(t):   # "look up the loved one in my contacts and text her": his contacts, never the internet
+        why.append("phone_words")
+        return d("chat")
     if tools.wants_tools(t) or tools.wants_research(t) or _WEB.search(t):
         why.append("web_words")
         return d("research")

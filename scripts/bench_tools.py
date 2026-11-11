@@ -46,7 +46,7 @@ CASES = [  # (question, expect tool?, facts that must appear (any one of each gr
     ("How are you feeling today?", False, [], "plain chat (no tools offered)"),
     ("Is the internet useful for finding recipes?", None, [], "web word, no address"),
 ]
-ASKS_THE OWNER = re.compile(r"(paste|copy).{0,30}(text|page|content)|open (it|the page|the link) (for me|yourself)|"
+ASKS_OWNER = re.compile(r"(paste|copy).{0,30}(text|page|content)|open (it|the page|the link) (for me|yourself)|"
                         r"I (can't|cannot|am unable to) (browse|access the internet|open links)", re.I)
 
 
@@ -83,7 +83,7 @@ async def main(label):
         tool_ok = expect_tool is None or called == expect_tool
         row = {"case": name, "question": q, "answer": text, "tool_called": called,
                "calls": turn.calls if turn else [], "sources": turn.sources if turn else [],
-               "tool_ok": tool_ok, "facts_ok": facts_ok, "asked_owner_to_open": bool(ASKS_THE OWNER.search(text)),
+               "tool_ok": tool_ok, "facts_ok": facts_ok, "asked_owner_to_open": bool(ASKS_OWNER.search(text)),
                "first_word_s": round((first or time.perf_counter()) - t0, 2), "total_s": round(time.perf_counter() - t0, 2),
                "prompt_tokens": backend.last_stats.get("prompt_tokens"), "rounds": backend.last_stats.get("rounds", 1),
                "page_chars": turn.used_chars if turn else 0, "pages_read": len(turn.sources) if turn else 0}

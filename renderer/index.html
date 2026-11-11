@@ -76,6 +76,8 @@
 #photo-view.on{display:flex}
 #photo-view img{max-width:94vw;max-height:88vh;border-radius:10px;box-shadow:0 8px 40px #000}
 #photo-view p{position:absolute;bottom:14px;left:0;right:0;text-align:center;color:#aab4be;font:15px system-ui;margin:0}
+#photo-close{position:absolute;top:18px;right:22px;padding:10px 20px;font:600 18px system-ui;color:#fff;background:#3a4450;border:1px solid #8a96a3;border-radius:10px;cursor:pointer}
+#photo-close:hover{background:#556270}
 </style>
 </head>
 <body>
@@ -90,7 +92,7 @@
   <div id="state" role="status"><span id="dot"></span><span id="stateText">connecting</span><span id="ddBadge" title="Daydream is on: say “wake up” to stop" hidden><span id="ddDot"></span>daydream</span></div>
 </section>
 <section id="side">
-  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/photos.html" target="_blank" style="font-size:12px;color:var(--accent)">Photos</a><a href="/memories.html" target="_blank" style="font-size:12px;color:var(--accent)">My memories</a><a href="/voices.html" target="_blank" style="font-size:12px;color:var(--accent)">Who’s talking</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
+  <header><h1>ECHO PERSONA</h1><div style="display:flex;gap:14px;align-items:center"><label><input type="checkbox" id="speak" checked> Speak</label><select id="voice" aria-label="Voice"><option value="__own__">My voice</option></select><label>Listen <select id="listen" aria-label="Listening mode"><option value="ptt">Push-to-talk</option><option value="handsfree">Hands-free</option><option value="wake">“Hey Echo”</option></select></label><button id="memBtn" style="padding:4px 12px;font-size:12px">What I remember</button><a href="/studio.html" target="_blank" style="font-size:12px;color:var(--accent)">Avatar Collector</a><a href="/face.html" target="_blank" style="font-size:12px;color:var(--accent)">My face</a><a href="/personality.html" target="_blank" style="font-size:12px;color:var(--accent)">How I talk</a><a href="/photos.html" target="_blank" style="font-size:12px;color:var(--accent)">Photos</a><a href="/memories.html" target="_blank" style="font-size:12px;color:var(--accent)">My memories</a><a href="/voices.html" target="_blank" style="font-size:12px;color:var(--accent)">Who’s talking</a><a href="http://127.0.0.1:8772/" target="_blank" style="font-size:12px;color:var(--accent)" title="Link a phone or tablet, see linked devices, remove one">Echo Link</a><a href="/status.html" target="_blank" style="font-size:12px;color:var(--accent)">Status</a></div></header>
   <div id="log" aria-live="polite"></div>
   <form id="f"><input type="text" id="q" placeholder="Talk to Echo…" autocomplete="off" aria-label="Message"><button type="button" id="micBtn" title="Click, or hold Space, to talk" aria-label="Talk">🎙</button><button>Send</button></form>
 </section>
@@ -325,8 +327,11 @@ function voiceBoost(on) {
 function add(text, cls, meta) {
   const d = document.createElement('div'); d.className = 'm ' + (cls||''); d.textContent = text;
   if (meta) { const m = document.createElement('div'); m.className = 'meta'; m.textContent = meta; d.appendChild(m); }
-  $('log').appendChild(d); $('log').scrollTop = 1e9;
+  const log = $('log'); log.appendChild(d);
+  while (log.childElementCount > MAX_LOG) log.firstElementChild.remove();   // the screen keeps the latest; the archive keeps every word
+  log.scrollTop = 1e9;
 }
+const MAX_LOG = 200;
 let pendingSources = null;
 function trainingHint(m) {   // small reminder left of "Show what I hear", below the face (core/trainer.py)
   const h = $('trainHint'); h.textContent = '';
@@ -398,7 +403,7 @@ let speakGen = 0, ownSpeaking = false, ownAudio = null;
 const ttsCache = new Map();   // short phrases like "Yes?" are reused instantly
 function stopSpeaking() {
   speakGen++; speechSynthesis.cancel(); voiceStop();
-  if (ownAudio) { ownAudio.pause(); ownAudio = null; }
+  if (ownAudio) { ownAudio.pause(); URL.revokeObjectURL(ownAudio.src); ownAudio = null; }
   if (ownSpeaking) { ownSpeaking = false; setState('idle'); }
 }
 function fetchVoice(sentence) {
@@ -432,8 +437,10 @@ async function speakOwn(text) {
       if (gen !== speakGen) return;
       if (i + 1 < sentences.length) next = fetchVoice(sentences[i + 1]);   // prepare the next sentence while this one plays
       await new Promise(res => {
-        ownAudio = new Audio(URL.createObjectURL(blob));
-        ownAudio.onended = ownAudio.onerror = res; ownAudio.play().catch(res);
+        const url = URL.createObjectURL(blob);   // let each sentence's clip go once it has played (it used to stay in memory)
+        const done = () => { URL.revokeObjectURL(url); res(); };
+        ownAudio = new Audio(url);
+        ownAudio.onended = ownAudio.onerror = done; ownAudio.play().catch(done);
       });
       if (gen !== speakGen) return;
     }
@@ -496,7 +503,15 @@ function takeChunks(final) {
   if (final && V.pending.trim()) { out.push(V.pending.trim()); V.pending = ''; V.chunks++; }
   return out;
 }
+// 2026-11-05: emoji are for the text window only. Each streamed piece is cleaned BEFORE it reaches the voice: a piece
+// that was only "💐" went to the voice service empty, was refused, and the window fell back to the stand-in voice,
+// which then read the emoji out loud ("bouquet"). the owner heard both.
+const EMOJI = /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}\u{FE0F}\u{200D}\u{20E3}]/gu;
+function noEmoji(text) {
+  return String(text || '').replace(EMOJI, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([.,!?;:])/g, '$1');
+}
 function voiceFeed(delta, final = false) {
+  delta = noEmoji(delta);
   V.full += delta; V.pending += delta;
   for (const c of takeChunks(final)) V.queue.push({ text: c, expr: V.expr, blinks: V.blinks });   // each phrase keeps its own face
   if (final) V.ended = true;
@@ -523,6 +538,8 @@ async function voicePump() {
   }
 }
 async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
+  text = noEmoji(text).trim();
+  if (!/[\p{L}\p{N}]/u.test(text)) return;   // nothing to say in this piece (only an emoji or punctuation): not a failure
   if (!V.ctx) {
     V.ctx = new AudioContext(); V.nextTime = 0;
     V.an = V.ctx.createAnalyser(); V.an.fftSize = 1024; V.an.smoothingTimeConstant = 0;  // drives the mouth shapes
@@ -585,13 +602,15 @@ async function voicePlay(text, gen, expr = 'neutral', blinks = 0) {
   }
 }
 function speak(text) {
-  if (!$('speak').checked) { setState('idle'); return; }
+  text = noEmoji(text).trim();
+  if (!$('speak').checked || !text) { setState('idle'); return; }
   stopSpeaking();
   if ($('voice').value === OWN) return speakOwn(text);
   speakSystem(text);
 }
 function speakSystem(text) {
-  if (!('speechSynthesis' in window)) { setState('idle'); return; }
+  text = noEmoji(text).trim();
+  if (!('speechSynthesis' in window) || !text) { setState('idle'); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text); currentUtt = u;
   const v = speechSynthesis.getVoices().find(v => v.name === $('voice').value); if (v) u.voice = v;
@@ -642,7 +661,7 @@ function connect() {
     if (m.type === 'music_stop') endMusic(false);
     if (m.type === 'note') add(String(m.text || ''), 'note');
     if (m.type === 'hear') m.on ? hearStart() : hearStop();
-    if (m.type === 'photo') showPhoto(m.url);
+    if (m.type === 'photo') showPhoto(m.url, m.caption);
     if (m.type === 'photo_close') hidePhoto();
     if (m.type === 'choices') { addChoices(m.options || []); }
     if (m.type === 'history' && m.training) trainingHint(m.training);
@@ -905,7 +924,9 @@ $('listen').onchange = async () => {
 let music = null;   // {win, vid, before, poll, told}
 function startMusic(url, vid) {
   if (music) endMusic(false, true);
-  const w = window.open(url, 'echo-music', 'popup,width=960,height=600');
+  const half = Math.floor(screen.availWidth / 2);   // 2026-11-05: right half, beside Echo (the owner)
+  const w = window.open(url, 'echo-music', `popup,left=${(screen.availLeft || 0) + half},top=${screen.availTop || 0},` +
+                        `width=${screen.availWidth - half},height=${Math.min(720, screen.availHeight)}`);
   if (!w) { ws.send(JSON.stringify({ type: 'music_failed', url, vid })); return; }   // blocked: Echo opens Chrome instead
   const before = music_before ?? mode();
   music_before = before;
@@ -975,12 +996,41 @@ function hearStop(quiet) {
 window.addEventListener('beforeunload', () => { try { music && music.win.close(); } catch {} });
 // A photo Echo remembers (2026-11-03): "Can you show me the picture?" shows it over the face until clicked or
 // "close the picture". Closes by itself after 10 minutes so it's never left covering Echo.
-let photoTimer = null;
-function showPhoto(url) {
-  const v = $('photo-view'); v.querySelector('img').src = url; v.classList.add('on');
+// 2026-11-05 (the owner): the photo opens in its own window on the RIGHT half of the screen (Echo is the left half), with
+// a Close button; the overlay over the face is only the fallback if the window can't open.
+let photoTimer = null, photoWin = null;
+const PHOTO_PAGE = (src, cap) => `<!doctype html><html><head><meta charset="utf-8"><title>Echo – photo</title><style>
+html,body{margin:0;height:100%;background:#111;display:flex;align-items:center;justify-content:center;overflow:hidden}
+img{max-width:96vw;max-height:88vh;border-radius:10px;box-shadow:0 8px 40px #000}
+button{position:fixed;top:18px;right:22px;padding:12px 24px;font:600 20px system-ui;color:#fff;background:#3a4450;
+border:1px solid #8a96a3;border-radius:10px;cursor:pointer}button:hover{background:#556270}
+p{position:fixed;bottom:12px;left:0;right:0;text-align:center;color:#aab4be;font:15px system-ui;margin:0}
+h2{position:fixed;top:22px;left:0;right:0;text-align:center;color:#f3d6e4;font:600 28px Georgia,serif;margin:0;
+text-shadow:0 2px 12px #000}</style></head>
+<body>${cap ? `<h2>${cap.replace(/[<>&]/g, '')}</h2>` : ''}<button onclick="window.close()">✕ Close</button><img src="${src}" alt="A photo Echo remembers">
+<p>Click Close, or say "close the picture". It also closes when we talk about something else.</p></body></html>`;
+function showPhoto(url, caption) {
+  const src = new URL(url, location.origin).href;
+  const sx = screen.availLeft || 0, sw = screen.availWidth, sh = screen.availHeight, half = Math.floor(sw / 2);
+  try {
+    if (!photoWin || photoWin.closed)
+      photoWin = window.open('', 'echo-photo', `popup=yes,left=${sx + half},top=${screen.availTop || 0},width=${sw - half},height=${sh}`);
+    if (photoWin) {
+      photoWin.document.open(); photoWin.document.write(PHOTO_PAGE(src, caption)); photoWin.document.close();
+      try { photoWin.moveTo(sx + half, screen.availTop || 0); photoWin.resizeTo(sw - half, sh); } catch {}
+      clearTimeout(photoTimer); photoTimer = setTimeout(hidePhoto, 600000);
+      return;
+    }
+  } catch {}
+  const v = $('photo-view'); v.querySelector('img').src = url; v.classList.add('on');   // fallback: over the face
   clearTimeout(photoTimer); photoTimer = setTimeout(hidePhoto, 600000);
 }
-function hidePhoto() { clearTimeout(photoTimer); $('photo-view').classList.remove('on'); }
+function hidePhoto() {
+  clearTimeout(photoTimer); $('photo-view').classList.remove('on');
+  try { photoWin && !photoWin.closed && photoWin.close(); } catch {}
+  photoWin = null;
+}
+window.addEventListener('beforeunload', () => { try { photoWin && photoWin.close(); } catch {} });
 document.addEventListener('click', e => { if (e.target.closest && e.target.closest('#photo-view')) hidePhoto(); });
 // Only one Echo window may use the microphone: a newer one (any browser) tells older ones to stand down.
 function standDown() {
@@ -1007,6 +1057,6 @@ try {
 // Every time Echo opens it listens for "Hey Echo" (the mic opens; Chrome asks permission once).
 $('listen').value = 'wake'; $('listen').onchange();
 </script>
-<div id="photo-view" title="Click to close"><img alt="A photo Echo remembers"><p>Click anywhere, or say "close the picture"</p></div>
+<div id="photo-view" title="Click to close"><button id="photo-close" type="button" aria-label="Close the photo">✕ Close</button><img alt="A photo Echo remembers"><p>Click Close or anywhere, or say "close the picture". It also closes when we talk about something else.</p></div>
 </body>
 </html>

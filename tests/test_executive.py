@@ -291,3 +291,23 @@ def test_layers_and_development_endpoints(tmp_path):
     assert any(h["what"] == "lesson added" for h in lay["history"])
     rec = last_record(tmp_path)
     assert rec["exec"]["modules"].get("style") in ("fired", "quiet") and "style_filter" in rec["exec"]["modules"]
+
+
+# 2026-11-05: short answers with nothing of their own → no memory search (they pulled in weather notes and a poem)
+@pytest.mark.parametrize("text", ["No problem.", "Yes, it would.", "It was.", "Yes, it is.", "That's okay.", "Okay",
+                                  "Thanks, Echo!", "Yes, there were, quite a few."])
+def test_small_talk_skips_memory_search(text):
+    p, q = executive.plan_turn(text, "I don't have a sticker right now.")
+    assert q == "" and p.query == "none" and p.query_why == "small_talk"
+
+
+@pytest.mark.parametrize("text", ["Yes, remember, E. E. Cummings is another author.", "It was Daisy.",
+                                  "No, that was in Riverside.", "Show me the cat.", "How are you today?",
+                                  "That's okay. You'll grow and you'll be able to do new things."])
+def test_content_still_searches(text):
+    p, q = executive.plan_turn(text, "Earlier message.")
+    assert q and p.query != "none"
+
+
+def test_small_talk_only_in_chat():
+    assert executive.plan_turn("Yes, it is.", None, kind="memory")[1] == "Yes, it is."

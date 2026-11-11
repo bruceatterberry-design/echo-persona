@@ -66,7 +66,7 @@ def referential(text: str) -> tuple[bool, str]:
 SWITCHES = {"grounding": "ECHO_GROUNDING_NOTES", "name_check": "ECHO_METACOG_NOTES",
             "correction_check": "ECHO_METACOG_NOTES", "count_check": "ECHO_METACOG_NOTES",
             "social": "ECHO_SOCIAL_NOTES", "self_model": "ECHO_SELF_NOTES", "style": "ECHO_STYLE_NOTES",
-            "style_filter": "ECHO_STYLE_FILTER"}
+            "style_filter": "ECHO_STYLE_FILTER", "dialogue": "ECHO_EDIM_NOTES"}
 
 
 @dataclass
@@ -99,10 +99,31 @@ class TurnPlan:
                 "cache": self.cache, "modules": dict(self.modules)}
 
 
+# ---- small talk: no memory search (the owner, 2026-11-05) ----
+# "No problem." brought in a note about the loved one and the weather on Oct 27 → "I don't have the weather data for that day";
+# "Yes, it would." brought in a whole E. E. Cummings poem → a reply about Cummings out of nowhere. A short answer with no
+# words of its own is about the conversation itself, which the model already has in front of it.
+_SMALL = set("""yes yeah yep yup ya no nope nah not okay ok k alright all right sure fine good great nice cool lovely
+wonderful perfect awesome thanks thank you it it's its is was were would will could should does did do done that that's
+thats this these those there they them so too me i i'm im am we us really indeed exactly correct true agreed absolutely
+definitely of course problem worries welcome well oh ah aw hmm uh um wow maybe guess think suppose owner echo honey hey
+sounds pretty very much a lot glad happy quite few some bit little sometimes hope just still yet now then ha haha
+please sorry right""".split())
+
+
+def small_talk(text: str) -> bool:
+    """ "No problem." / "Yes, it would." / "It was." / "That's okay." — at most 6 words, none with content."""
+    words = re.findall(r"[a-z']+", (text or "").lower().replace("’", "'"))
+    return 0 < len(words) <= 6 and all(w in _SMALL for w in words)
+
+
 def plan_turn(text: str, previous_user: str | None, kind: str = "chat", kind_why: list[str] | None = None,
               not_done: bool = False, cache: str = "fresh") -> tuple[TurnPlan, str]:
-    """The plan for one message and the memory-search query it implies."""
+    """The plan for one message and the memory-search query it implies ("" = no memory search: small talk)."""
     p = TurnPlan(kind=kind, kind_why=list(kind_why or []), not_done=not_done, cache=cache)
+    if kind == "chat" and small_talk(text):
+        p.query, p.query_why = "none", "small_talk"
+        return p, ""
     is_ref, why = referential(text)
     if is_ref and previous_user:
         p.query, p.query_why = "with_previous", why

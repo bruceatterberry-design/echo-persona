@@ -30,8 +30,44 @@ if you switch it on; see Privacy.
 - **Android Collector app (optional):** guided daily sessions that record your voice and face video on your phone, and
   copy to the Mac over a USB cable only (the app has no internet permission).
 
+> **📱 1.1.0: Echo in your hand.** New Android app; see below.
+>
 > **🎉 Out of beta: 1.0.0.** Echo Persona is complete and covered by 902 automated tests. It has so far been
 > used on one Mac, so keep backups of your recordings (`scripts/backup_dataset.sh`) and please report problems.
+
+## What's new in 1.1.0 📱 Echo in your hand
+
+**The Echo Android app.** Talk to Echo from a tablet or phone anywhere in the house, or away from home through
+Tailscale. Download **EchoPersona-1.1.0.apk** from the [Releases](../../releases) page (Android 10 or newer).
+
+- **Talk anywhere:** tap the gold ring and talk; tap again to interrupt. The ring breathes gold while waiting, pulses
+  light blue while thinking and purple while speaking, and turns grey when it can't reach the Mac.
+- **Show Echo:** he sees through the camera while you talk ("What is this?", "Can you read this label?",
+  "Watch what happens when…"). Pictures are used for that one question and never saved.
+- **Calls and texts from your own number:** the Mac sends them through your iPhone (Messages and Phone apps), only after
+  you tap Approve on a card that shows who, which number and the exact words.
+- **Echo makes calls himself:** a pharmacy, a store, a tire shop, a restaurant. He plans a checklist, you approve the
+  opening line and what he may agree to (for example "book an appointment Tue–Thu after 1 pm"), and he handles phone
+  menus and up to 15 minutes on hold. Afterwards you get a summary and the transcript. He never pays, never gives card
+  or bank numbers, never pretends to be you, and says he's an AI assistant if asked. Not in your contacts? He finds the
+  number online and shows you where it came from first.
+- **Errands:** "Text Sam I'm on my way and remind me at 5 to call Joe" becomes one approval card per errand
+  (texts, calls, reminders, calendar, email, directions, notes).
+- **Echo joins in:** put a call on speaker next to the tablet; once the other person agrees, anyone can say "Echo…".
+  Nothing from it is kept.
+- **Document scanner:** scan pages on the device; the Mac reads them into a searchable PDF and Echo answers questions
+  about them, citing the page.
+- **Side window:** weather, your calendar, pictures and the web pages Echo used appear to the right of Echo.
+- **Behind the scenes:** a dialogue manager that keeps track of topics, questions and facts in the conversation, an
+  awareness layer that decides what deserves attention, and a fix for two slow memory leaks in Echo's Mac window
+  (spoken clips are released after they play; the on-screen conversation keeps its latest 200 messages).
+
+**Setting it up:** run `uv run python -m echolink` on the Mac (or install `echolink/com.echopersona.echolink.plist`
+as a LaunchAgent), open the app on the same Wi-Fi, tap **Link**, and confirm the same 6-digit number on the Mac at
+http://127.0.0.1:8772. Optional, on your Mac only: `config/home.json` (copy `config/home.example.json`) for the
+weather and for "near home" phone-number searches, and `config/echo_calls.json` (copy the example) for where Echo
+texts call results. Calls and texts need an iPhone paired with the Mac, and Echo's own calls need the free
+BlackHole 2ch and 16ch audio drivers.
 
 ## What's new in 1.0.0 🎉 Out of beta
 

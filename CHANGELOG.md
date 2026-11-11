@@ -2,7 +2,22 @@
 
 Echo Persona 1.0.0 is out of beta. Keep backups of your data.
 
-## Unreleased (on main since 1.0.0)
+## 1.1.0: Echo in your hand (2026-11-10)
+
+- **Echo Android app** (`echo-android/`, APK on the Releases page): link by Wi-Fi discovery or QR code (pinned TLS,
+  key kept in the Android Keystore), reach Echo away from home through Tailscale, the gold presence ring, talk and
+  interrupt, Show Echo (camera), document scanner, calls and texts with one-tap approval, Echo's own phone calls,
+  errands, "Echo joins in", and a side window (weather, calendar, pictures, sources).
+- **Echo Link** (`echolink/`): the Mac side of the app: pairing, devices, the phone gateway, Echo's calls
+  (`callagent.py`, `business.py`), number lookup, contacts name matching, and the iPhone bridge for texts and calls.
+- **Documents** (`documents/`): scanned pages read on the Mac (Apple Vision) into searchable PDFs.
+- **Dialogue manager + awareness** (`core/dialogue.py`, `core/awareness.py`, `core/edim_link.py`, `config/edim.json`).
+- **Errands** (`core/errands.py`), **flowers** for the people Echo talks with (`core/flowers.py`), dream questions
+  that wait for a lull (`memory/dreamq.py`), and a filter for "machine talk" ("it warms my circuits").
+- **Fixed:** two slow memory leaks in Echo's Mac window; `scripts/bench_tools.py` failed to compile.
+- New local-only settings: `config/home.json`, `config/echo_calls.json` (examples included; both are git-ignored).
+
+## 1.0.1 (on main after 1.0.0)
 
 ### Overnight training (dreaming's last step)
 - `scripts/daydream_train.py`, scheduled with `scripts/install_daydream_train.sh` (02:30): when training is switched on,

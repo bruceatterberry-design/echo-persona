@@ -57,6 +57,7 @@ class StreamParser:
     def __init__(self, allow_name: bool = True, name: str = "", block_names: list[str] | None = None,
                  trim_opener: bool = False, opener_names: list[str] | None = None) -> None:
         self.names = NameFilter(name, allow=allow_name)
+        self.machine = MachineTalkFilter()   # no "it warms my circuits"
         self.opener = OpenerFilter(opener_names) if trim_opener else None   # CA 2.0 Phase 8 (the owner's lesson), see OpenerFilter
         # CA 2.0 Phase 5: names that may not be used to address whoever is speaking (core/social.py blocked_names):
         # an unrecognised voice is addressed by no name; the owner is never called by the loved one's name, and back
@@ -93,6 +94,7 @@ class StreamParser:
         clean, expr = self._af.feed(piece, final)
         if self.opener:
             clean = self.opener.feed(clean, final)
+        clean = self.machine.feed(clean, final)
         clean = self.names.feed(clean, final)
         for f in self.blocked:
             clean = f.feed(clean, final)
@@ -274,6 +276,56 @@ class OpenerFilter:
         return text
 
 
+class MachineTalkFilter:
+    """the owner (11-05): Echo kept saying "it warms my circuits" (7 real replies, 5 of them in two days, copying itself
+    from recent turns). He is the owner's digital self and talks like a person, so the robot idiom is swapped for plain
+    words as it streams: "It truly warms my circuits to know…" → "It truly means a lot to me to know…". The
+    replacement rotates so it doesn't become the next stock line. Text that could be the start of the phrase is held
+    back until it's clear (a few characters at most)."""
+
+    SUBS = (re.compile(r"\b(warm|make)(s?) my circuits(?: feel)?(?: warm)?\b", re.I),
+            re.compile(r"\bmy circuits (?:feel|felt|are|were|get|got) (?:all )?(?:warm|happy|tingling|buzzing)\b", re.I))
+    STEMS = ("warms my circuits", "warm my circuits", "makes my circuits feel warm", "make my circuits feel warm",
+             "my circuits feel warm", "my circuits are warm")
+    SAY = (("mean", "a lot to me"), ("make", "me happy"), ("make", "me glad"))
+    SAY_PLAIN = ("I feel good", "I'm happy", "I'm glad")
+    turn = 0
+
+    def __init__(self) -> None:
+        self.buf = ""
+
+    def _say(self, m: re.Match) -> str:
+        MachineTalkFilter.turn += 1
+        if m.re is self.SUBS[1]:
+            out = self.SAY_PLAIN[self.turn % len(self.SAY_PLAIN)]
+        else:
+            verb, rest = self.SAY[self.turn % len(self.SAY)]
+            out = f"{verb}{m.group(2)} {rest}"
+        return out[0].upper() + out[1:] if m.group(0)[0].isupper() else out
+
+    TAIL = re.compile(r"\b(?:(?:warm|make)s?\s+)?my circuits[a-z ]{0,12}$", re.I)   # "…circuits feel war" may go on
+
+    def _hold(self) -> int:
+        low = self.buf.lower()
+        m = self.TAIL.search(self.buf)
+        if m:
+            return len(self.buf) - m.start()
+        for k in range(min(len(low), max(map(len, self.STEMS))), 0, -1):
+            if any(s.startswith(low[-k:]) for s in self.STEMS):
+                i = len(low) - k   # only a word start, not "army" → "my"
+                if i == 0 or not low[i - 1].isalpha():
+                    return k
+        return 0
+
+    def feed(self, piece: str, final: bool = False) -> str:
+        self.buf += piece
+        hold = 0 if final else self._hold()
+        emit, self.buf = (self.buf[:-hold], self.buf[-hold:]) if hold else (self.buf, "")
+        for rx in self.SUBS:
+            emit = rx.sub(self._say, emit)
+        return emit
+
+
 class NameFilter:
     """Drops the loved one's name when it's only used to address them ("Goodnight, Sam." → "Goodnight.", "Sam, I'm here" →
     "I'm here"), unless allowed this time. Mentions like "Sam's garden" are kept. Works on streamed text: a possible
@@ -310,3 +362,15 @@ class NameFilter:
         if emit.strip():
             self.sentence_start = emit.rstrip()[-1] in ".!?"
         return emit
+
+
+# 2026-11-05: Echo may use emoji in his text window; the voice never gets them (they'd be read out or garble it)
+EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\u2300-\u23FF\uFE0F\u200D\u20E3"
+                      "\U0001F1E6-\U0001F1FF]")
+
+
+def speakable(text: str) -> str:
+    """The text without emoji, tidy around where they were ("for you, the loved one 💐." → "for you, the loved one.")."""
+    t = EMOJI_RE.sub("", text or "")
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    return re.sub(r"\s+([.,!?;:])", r"\1", t).strip()

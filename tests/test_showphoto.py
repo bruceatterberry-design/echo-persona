@@ -97,3 +97,36 @@ def test_show_and_close_through_chat(tmp_path):
         ws.send_json({"text": "Okay, put it away."})
         seen = _until(ws, "reply")
         assert {"type": "photo_close"} in seen and seen[-1]["text"] == "Okay, I've put it away."
+
+
+# ---- 2026-11-05: photos I talk about go on screen, and close when the talk moves on ----
+SHIRT = "This photo shows a man in a green jacket, smiling in a kitchen. Taken in October 2026."
+
+
+def test_my_photo_question_shows_it():   # the owner's real conversation, 11-05 12:14
+    q = "I have a photo from October 2026 of a man in a green jacket. Is that you?"
+    assert sp.reply_shows(q, SHIRT, asked=False)
+    assert sp.reply_shows("Is that you, the owner?", SHIRT, asked=True)   # my photo question: always shown
+    assert not sp.reply_shows("I love that blue shirt idea.", SHIRT, asked=False)    # no photo talk
+    assert not sp.reply_shows("I have a photo of Daisy on the couch.", SHIRT, asked=False)   # a different photo
+    assert not sp.reply_shows("Is that you?", "", asked=True)        # no description: nothing to show
+
+
+def test_stays_open_while_we_talk_about_it():
+    asked = "I have a photo from October 2026 of a man in a green jacket. Is that you?"
+    assert not sp.moved_on("Yes, it was me, but I don't know what was happening that day.", SHIRT, asked, True)
+    assert not sp.moved_on("That kitchen was in our old house.", SHIRT, "Thanks, the owner.", False)
+    assert not sp.moved_on("I like that picture.", SHIRT, "Okay.", False)
+    assert not sp.moved_on("No problem.", SHIRT, "Yes, that photo shows you, the owner.", False)   # short, right after it
+
+
+def test_closes_on_a_new_topic():
+    assert sp.moved_on("I would like to make an app for you, Echo, so that you can see the world.", SHIRT,
+                       "Yes, that photo shows you, the owner.", False)
+    assert sp.moved_on("Yes, it would.", SHIRT, "Maybe we can find a sticker later.", False)
+    assert sp.moved_on("What's the weather like tomorrow?", SHIRT, "", False)
+
+
+def test_description():
+    assert "Anna" in sp.description(STORE, FAMILY)
+    assert sp.description(STORE, GONE) == "" and sp.description(STORE, None) == ""

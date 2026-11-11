@@ -549,6 +549,25 @@ def duck_music(on: bool) -> str:
     return "ok" if (r.stdout or "").strip() not in ("", "0") else "none"
 
 
+_SCREEN: list[int] = []
+
+
+def right_half() -> list[str]:
+    """Chrome flags that put a new window on the RIGHT half of the main screen (the owner, 2026-11-05: Echo's window is the
+    left half; pages, photos etc. go on the right). Measured: honoured both when Chrome starts and when it's open."""
+    if not _SCREEN:
+        try:
+            r = subprocess.run(["osascript", "-e", 'tell application "Finder" to get bounds of window of desktop'],
+                               capture_output=True, text=True, timeout=5)
+            _SCREEN.extend(int(x) for x in str(getattr(r, "stdout", "") or "").strip().split(", ")[2:4])
+        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            pass
+        if len(_SCREEN) != 2:
+            _SCREEN[:] = [2560, 1080]
+    w, h = _SCREEN
+    return [f"--window-position={w // 2},0", f"--window-size={w - w // 2},{h}"]
+
+
 def run(action: Action) -> bool:
     """Open it. Returns False if it couldn't be started."""
     try:
@@ -563,7 +582,7 @@ def run(action: Action) -> bool:
                 top = youtube_top(action.play, action.random, action.exclude, action.avoid)
                 if top:
                     url = top + ("&authuser=" + url.split("authuser=")[-1] if "authuser=" in url else "")
-            args = ["open", "-na", "Google Chrome", "--args", "--new-window"] + ([url] if url else [])
+            args = ["open", "-na", "Google Chrome", "--args", "--new-window", *right_half()] + ([url] if url else [])
             subprocess.run(args, check=True, timeout=15, capture_output=True)
             action.opened = url
         return True

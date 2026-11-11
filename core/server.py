@@ -6,6 +6,7 @@ import time
 from logging.handlers import RotatingFileHandler
 
 import asyncio
+import base64
 import concurrent.futures
 import json
 import subprocess
@@ -43,8 +44,10 @@ from core.state import CognitiveState
 from core import focus
 from core import social
 from core import metacog
+from core import edim_link   # EDIM + awareness (Phase 3): off unless ECHO_EDIM / ECHO_AWARENESS
 from core import showphoto
-from core.schema import StreamParser
+from core.flowers import Flowers
+from core.schema import speakable, StreamParser
 from voice.stt import MAX_AUDIO_BYTES, MLXWhisperSTT, STTBackend, STTError, decode_audio, make_stt
 from face import expressions as face_expressions
 from face.library import FaceError, FaceLibrary
@@ -58,6 +61,8 @@ from personality.versions import Versions
 from voice.studio import CONSENT_TEXT, MAX_TAKE_BYTES, Studio, StudioError
 from voice.wake import detect_end, detect_wake, is_noise_transcript
 from voice.speaker import NAME_RE as SPEAKER_NAME_RE, SpeakerID
+from core import errands
+from documents.store import Documents, doc_note
 from memory.store import LIFE_FIELDS, Kind, Memory, MemoryStore, Period, Status, format_for_prompt, format_summaries, parse_remember
 from memory import archive, summarize as summarizer
 from memory.entities import Entities
@@ -69,6 +74,7 @@ from memory import conflicts as conflict_check
 from memory.embed import Embedder
 from memory import candidates as mem_candidates
 from memory.curiosity import ASK_ME, Curiosity, asked_in, hint as curiosity_hint
+from memory import dreamq
 from core.llm import OllamaBackend
 
 log = logging.getLogger("echo")
@@ -204,6 +210,21 @@ class ClaudeIn(BaseModel):
     jobs: dict[str, bool] | None = None
 
 
+# Dream Bridge bodies live at module level: with `from __future__ import annotations` a model defined
+# inside create_app can't be resolved by FastAPI, which then wants `body` as a query parameter (422).
+class InsightIn(BaseModel):
+    text: str = Field(min_length=10, max_length=training.INSIGHT_CHARS)
+    source: str = Field(pattern=r"^dream-insight:[A-Za-z0-9_.:-]{1,80}$")
+    approved_by: str = Field(default="owner", max_length=40)
+
+
+class DreamLinkIn(BaseModel):
+    a: int
+    b: int
+    source: str = Field(pattern=r"^dream:[A-Za-z0-9_.:;-]{1,200}$")
+    approved_by: str = Field(default="owner", max_length=40)
+
+
 
 
 SYSTEM_EXTRA = (
@@ -270,7 +291,120 @@ def _who_q() -> re.Pattern:
 _ONE_TIME = re.compile(r"\s*\[(?:I'm the owner's digital self, and my memories|(?:the owner|the loved one) (?:just answered|told me more)|"
                        r"Nothing was opened or played|My voice check wasn't sure|You can use tools in this message|"
                        r"the owner asked you to research|My memory check|About me, checked facts|Date check|Social note|Memory check|"
-                       r"Correction check|Style note)[^\]]*\]")
+                       r"Correction check|Style note|Conversation note|Camera|Document|Call prep|After the call|Text message|Errands)[^\]]*\]")
+
+
+DOCS = Documents()          # scanned documents per person (documents/store.py); read here, received by Echo Link
+CAMERA_MAX_PICTURES = 3
+CAMERA_MAX_B64 = 2_000_000          # ~1.5 MB per JPEG; the app sends ~1024 px pictures
+
+
+def camera_pictures(msg: dict) -> dict | None:
+    """Pictures from Show Echo: {"images": [base64 JPEG, …], "camera": "back"|"front"}, oldest first. Anything that
+    isn't a reasonable JPEG is dropped; nothing is written to disk or logged."""
+    imgs = msg.get("images")
+    if not isinstance(imgs, list) or not imgs:
+        return None
+    ok = []
+    for b in imgs[-CAMERA_MAX_PICTURES:]:
+        if isinstance(b, str) and 100 < len(b) <= CAMERA_MAX_B64:
+            try:
+                if base64.b64decode(b[:16] + "=" * (-len(b[:16]) % 4))[:3] == b"\xff\xd8\xff":
+                    ok.append(b)
+            except (ValueError, TypeError):
+                pass
+    return {"images": ok, "camera": "front" if msg.get("camera") == "front" else "back"} if ok else None
+
+
+def group_talk(msg: dict) -> dict | None:
+    """{"group": {"with": "Joe", "asker": "owner"|"guest", "lines": [{"who": "owner"|"guest"|"echo", "text"}, …]}}"""
+    g = msg.get("group")
+    if not isinstance(g, dict):
+        return None
+    name = re.sub(r"[^\w .'-]", "", str(g.get("with", "")))[:40].strip() or "the other person"
+    lines = []
+    for x in (g.get("lines") or [])[-12:]:
+        if isinstance(x, dict) and x.get("who") in ("owner", "guest", "echo") and str(x.get("text", "")).strip():
+            lines.append({"who": x["who"], "text": re.sub(r"[\[\]]", "", str(x["text"]))[:400]})
+    return {"with": name, "asker": "guest" if g.get("asker") == "guest" else "owner", "lines": lines}
+
+
+def group_note(g: dict) -> str:
+    names = {"owner": "the owner", "guest": g["with"], "echo": "You (Echo)"}
+    said = "\n".join(f"{names[x['who']]}: {x['text']}" for x in g["lines"]) or "(nothing yet)"
+    return (f"[Group talk: the owner is on a speakerphone call with {g['with']}, who agreed that you listen and talk. "
+            f"What was said just now, oldest first:\n{said}\nThe newest message was said to you by "
+            f"{names[g['asker']]}. Answer out loud to both of them: briefly and naturally (one to three sentences), as "
+            f"the owner's digital self. Don't bring up the owner's private matters, health, money, or the loved one's school work with "
+            f"{g['with']} unless the owner asks you to. You can't hear the call except through this room. Nothing from "
+            f"this call is kept.]")
+
+
+TASKS = ("call_prep", "after_call", "text_draft")
+
+
+_INFO_Q = re.compile(r"^\s*(?:(?:hey |ok )?echo,?\s+)?(?:who|what|when|where|which|how (?:many|much|tall|old|far|long|big)|"
+                     r"why did|is it true|did)\b", re.I)
+_PERSONAL = re.compile(r"\b(?:i|me|my|mine|we|us|our|you|your|yourself|echo|loved_one|owner|owner|mom|milo|"
+                       r"remember|feel|feeling|today'?s schedule|calendar|weather)\b", re.I)
+
+
+def side_window_question(text: str) -> bool:
+    """A general-knowledge question (worth showing sources beside the answer); never one about the owner, the loved one or Echo."""
+    t = (text or "").strip()
+    return bool(_INFO_Q.search(t)) and len(t.split()) >= 4 and not _PERSONAL.search(t)
+
+
+def recent_sources(text: str, turns: list[dict]) -> list[dict]:
+    """Sources kept with a recent answer about the same thing ("Sources: title (url); ...")."""
+    words = {w for w in re.findall(r"[a-z0-9]{4,}", text.lower())}
+    for t in reversed(turns):
+        c = t.get("content") or ""
+        if t.get("role") != "assistant" or "\n\nSources: " not in c:
+            continue
+        body, src = c.split("\n\nSources: ", 1)
+        if len(words & set(re.findall(r"[a-z0-9]{4,}", body.lower()))) >= 2:
+            return [{"title": m.group(1).strip()[:120], "url": m.group(2), "snippet": ""}
+                    for m in re.finditer(r"([^;]+?) \((https?://[^)\s]+)\)", src)][:6]
+    return []
+
+
+def phone_task(msg: dict) -> dict | None:
+    """{"task": {"kind": call_prep|after_call|text_draft, "who": "the loved one"}} from the calling section of the app. Only the
+    contact's NAME comes to the Mac; numbers and the contact list stay on the device."""
+    t = msg.get("task")
+    if not isinstance(t, dict) or t.get("kind") not in TASKS:
+        return None
+    who = re.sub(r"[^\w .'-]", "", str(t.get("who", "")))[:40].strip() or "them"
+    return {"kind": t["kind"], "who": who}
+
+
+def task_note(task: dict, speaker: str | None) -> str:
+    from echolink.owner import display
+    me, who = display(speaker or "owner"), task["who"]
+    if task["kind"] == "call_prep":
+        return (f"[Call prep: {me} is about to call {who}. Help him get ready in a few short points: what he wants to "
+                f"say or ask, and anything you truly remember about {who} that matters for this call. Don't make up "
+                f"facts about {who}. You can't hear the call itself.]")
+    if task["kind"] == "after_call":
+        return (f"[After the call: {me} just finished a call with {who} and is telling you how it went. Turn it into "
+                f"short notes and a list of things to do (who and when, if he said). Ask only if something important "
+                f"is unclear.]")
+    return (f"[Text message: {me} wants to text {who}. Write ONLY the message itself, ready to send: short, natural, "
+            f"in {me}'s own voice (first person), no quotes, no greeting line unless it fits, nothing else. "
+            f"He will check it before it is sent.]")
+
+
+def camera_note(seen: dict, speaker: str | None) -> str:
+    from echolink.owner import display
+    who = display(speaker) if speaker in ("owner", "loved_one") else "the owner"
+    n = len(seen["images"])
+    what = (f"{who} himself (the tablet's front camera, pointed at him)" if seen["camera"] == "front"
+            else f"what {who} is looking at (the tablet's back camera)")
+    pics = "this picture" if n == 1 else f"these {n} pictures, taken while he spoke, oldest first"
+    return (f"[Camera: {who} is showing you {what}, live, in {pics}. Answer what he said using what you can actually "
+            f"see. Say only what is really visible; if something is unclear, too dark or too far, say so and ask him "
+            f"to move closer, hold it still or turn on the light. Don't guess names, labels or numbers you can't read.]")
 
 
 def strip_hints(sent: str) -> str:
@@ -331,8 +465,10 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         g = grounding.label(res, controller.classify(question, known_names()).kind)
         return g.label, [(h.memory.id, h.memory.created, grounding.hit_label(h).label) for h in res.hits]
 
+    flowers = Flowers(store)   # 2026-11-05: flowers as gifts of appreciation (core/flowers.py)
     curiosity = Curiosity(store, cfg.ask_enabled, cfg.ask_every_minutes, cfg.ask_min_turns, answered=answered_on_phone,
-                          extra=learning.approved_questions, photos=lambda: initiative.photo_questions(store))
+                          extra=learning.approved_questions, photos=lambda: initiative.photo_questions(store),
+                          dreams=dreamq.questions)   # unknowns from my dreams that I agreed to ask about
 
     def check_conflicts_later(m: Memory, dup: bool) -> None:
         """New memory → look for contradictions in the background (the language model may be busy replying)."""
@@ -389,6 +525,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     last_photo: dict = {}    # 2026-11-03: the photo we were last talking about ({"sha", "at"}), for "show me the picture"
     # CA 2.0 Phase 2: what I was in the middle of survives a restart (core/state.py), each item only while fresh
     cstate = CognitiveState(Path(store.path).parent / "state.json")
+    edim = edim_link.EdimLink(cstate)   # EDIM + awareness: off | shadow | on (core/edim_link.py)
     if (r := cstate.restored_offer(browser.Action)):
         pending_offer.update(act=r[0], at=r[1])
     if (o := cstate.get("opened")):
@@ -682,6 +819,11 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     def cognitive_state():
         """CA 2.0: what Echo is in the middle of (survives restarts). Ids and labels only."""
         return cstate.snapshot()
+
+    @app.get("/api/dialogue")
+    def dialogue_state():
+        """EDIM + awareness (Phase 3): modes, topics/threads, focus, update times, errors. Localhost only."""
+        return edim.report()
 
     @app.get("/api/executive")
     def executive_state(days: int = 7):
@@ -1194,7 +1336,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
 
     @app.post("/api/tts")
     async def tts(body: dict):
-        text = str(body.get("text", "")).strip()[:600]
+        text = speakable(str(body.get("text", "")))[:600]   # emoji are for the window only
         if not text:
             raise HTTPException(400, "empty text")
         try:
@@ -1208,7 +1350,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     @app.post("/api/tts/stream")
     async def tts_stream(body: dict):
         """Pass the owner's voice through as it is generated (raw 16-bit PCM)."""
-        text = str(body.get("text", "")).strip()[:600]
+        text = speakable(str(body.get("text", "")))[:600]   # emoji are for the window only
         if not text:
             raise HTTPException(400, "empty text")
         req = tts_client.build_request("POST", "/stream", json={"text": text})
@@ -1638,11 +1780,6 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         """CA 2.0 Phase 9: what Echo would ask about next and why (scores are bookkeeping, not feelings)."""
         return initiative.report(store, curiosity, learning)
 
-    class InsightIn(BaseModel):
-        text: str = Field(min_length=10, max_length=training.INSIGHT_CHARS)
-        source: str = Field(pattern=r"^dream-insight:[A-Za-z0-9_.:-]{1,80}$")
-        approved_by: str = Field(default="owner", max_length=40)
-
     @app.post("/api/lessons/insight")
     def add_insight(body: InsightIn):
         """Dream Bridge: an approved general insight becomes a lesson (never a memory). Max 3 active, 200 chars."""
@@ -1656,12 +1793,6 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
     @app.delete("/api/lessons/insight/{source}")
     def drop_insight(source: str):
         return {"dropped": trainer.drop_insight(source)}
-
-    class DreamLinkIn(BaseModel):
-        a: int
-        b: int
-        source: str = Field(pattern=r"^dream:[A-Za-z0-9_.:;-]{1,200}$")
-        approved_by: str = Field(default="owner", max_length=40)
 
     @app.post("/api/memory/dream_link")
     def add_dream_link(body: DreamLinkIn):
@@ -1862,14 +1993,18 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         recent_ids = {m.id for m in notes[-3:]} | pack_ids
         # memory/retrieve.py: by meaning, words, who/what is named ("my" = the speaker), and when ("on Thursday");
         # at most 3, only ones the message really points to, plus short facts about the people named
-        res = recall.retrieve(query or text, qvec, speaker, k=3, exclude=recent_ids)   # query: topic-aware (focus.py)
-        log.info("recall %d memories, facts about %d, %.1f ms: %s", len(res.hits), len(res.facts), res.ms,
-                 "; ".join("+".join(r.split()[0] for r in h.why) for h in res.hits))   # reasons only, no content
         user = text
-        store.note_use([h.memory.id for h in res.hits])
-        recall_info.update(ids=[h.memory.id for h in res.hits], ms=round(res.ms, 1), res=res)
-        if (note := format_for_message(res, store)):
-            user = note + "\n\n" + text
+        if query == "":   # small talk ("No problem."): no memory search (core/executive.py small_talk, 2026-11-05)
+            log.info("recall skipped: small talk")
+            recall_info.update(ids=[], ms=0.0, res=None)
+        else:
+            res = recall.retrieve(query or text, qvec, speaker, k=3, exclude=recent_ids)   # query: topic-aware (focus.py)
+            log.info("recall %d memories, facts about %d, %.1f ms: %s", len(res.hits), len(res.facts), res.ms,
+                     "; ".join("+".join(r.split()[0] for r in h.why) for h in res.hits))   # reasons only, no content
+            store.note_use([h.memory.id for h in res.hits])
+            recall_info.update(ids=[h.memory.id for h in res.hits], ms=round(res.ms, 1), res=res)
+            if (note := format_for_message(res, store)):
+                user = note + "\n\n" + text
         if extra_hint:
             user = user + "\n\n" + extra_hint
         if speaker:   # like the notes, this goes with the message only; the stored conversation keeps what was said
@@ -2207,18 +2342,46 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
         await sock.send_json({"type": "state", "state": "idle"})
         return {"spoken": reply.text}
 
+    async def group_reply(sock: WebSocket, text: str, grp: dict) -> None:
+        """Echo talking WITH the owner and someone on a speakerphone call (they agreed on the device). His personality and
+        memories are read as usual, but nothing is written: no turns, no memories, no questions of his own, no EDIM."""
+        SCHED.turn_started()
+        await sock.send_json({"type": "state", "state": "thinking"})
+        try:
+            msgs = build_messages(text, "owner", None)       # his memories may help; nothing is written
+            msgs[-1]["content"] += "\n\n" + group_note(grp)
+            parser = StreamParser(allow_name=True)
+            async for piece in backend.chat_stream(msgs):
+                if (delta := parser.feed(piece)):
+                    await sock.send_json({"type": "delta", "text": delta, "expression": parser.expression,
+                                          "blinks": parser.blinks})
+            reply = parser.finish()
+            await sock.send_json({"type": "reply", "text": reply.text, "expression": reply.expression,
+                                  "intensity": reply.intensity, "group": True})
+        except Exception as e:  # noqa: BLE001
+            log.warning("group reply failed: %s", type(e).__name__)
+            await sock.send_json({"type": "error", "text": "I couldn't answer just now."})
+        await sock.send_json({"type": "state", "state": "idle"})
+
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
-        for old in list(windows):  # works across browsers/profiles, unlike the page's BroadcastChannel
-            try:
-                await old.send_json({"type": "stand_down"})
-            except Exception:
-                pass
-        windows.append(sock)
-        if hear.active():   # a reloaded window picks the listening back up
-            await sock.send_json({"type": "hear", "on": True})
-        await sock.send_json({"type": "history", "turns": store.recent_turns(MAX_TURNS),
+        # A phone through Echo Link (echolink/, which checked the phone's key and fixed its person) never silences the
+        # Mac window and gets no shared history (the owner's and the loved one's conversations stay apart). Windows: newest wins.
+        phone_user = sock.query_params.get("user") if sock.query_params.get("client") == "phone" else None
+        if phone_user not in (None, "owner", "loved_one"):
+            await sock.close(code=1008)
+            return
+        if not phone_user:
+            for old in list(windows):  # works across browsers/profiles, unlike the page's BroadcastChannel
+                try:
+                    await old.send_json({"type": "stand_down"})
+                except Exception:
+                    pass
+            windows.append(sock)
+            if hear.active():   # a reloaded window picks the listening back up
+                await sock.send_json({"type": "hear", "on": True})
+        await sock.send_json({"type": "history", "turns": [] if phone_user else store.recent_turns(MAX_TURNS),
                               "training": {"testing": trainer.testing, "busy": trainer.busy, "wrong": len(trainer.pending())}})
         asked: dict[str, str] = (cstate.get("which_one") or {}).get("answers") or {}   # my last "which one?" (restored)
         dds = daydream.Session()
@@ -2309,6 +2472,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 rec.first_word()   # commands answer at once
             if not rec.exec:   # Phase 7: commands, trainer, errors: the kind and the cache state still recorded
                 rec.exec = {"kind": rec.plan.get("kind"), "cache": cache_state, "answered_by": route}
+            rec.dialogue = edim.record()   # EDIM/awareness (ids and rule names only; {} when off)
             wslog.save(rec, route)
             try:   # CA 2.0: the persistent state after this turn (ids/labels only)
                 ecw = rec.ecw if isinstance(rec.ecw, dict) else {}
@@ -2354,8 +2518,17 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 dd_activity["at"] = time.time()
                 replay_of = msg.get("replay_of") if isinstance(msg.get("replay_of"), int) else None
                 text = str(msg.get("text", "")).strip()[:4000]
+                seen = camera_pictures(msg)   # Show Echo (the owner's tablet): pictures taken while he spoke, never stored
+                # "Ask Echo about this document": only a linked device, only that person's own documents
+                doc_ask = msg.get("doc") if phone_user and isinstance(msg.get("doc"), str) else None
+                task = phone_task(msg) if phone_user else None   # calls & texts on the owner's device: prep / notes / draft
+                if phone_user == "owner" and text and (grp := group_talk(msg)):
+                    await group_reply(sock, text, grp)   # "Echo joins in" (speakerphone): nothing from it is kept
+                    continue
                 # who said it, from the voice (spoken messages only); anything that isn't a known profile is ignored
                 speaker = msg.get("speaker") if msg.get("speaker") in (*speakers.profiles, "unknown") else None
+                if phone_user:   # the linked phone's owner, decided on the Mac when it was linked
+                    speaker = phone_user
                 if not text:
                     continue
                 rec = cws.TurnRecord()
@@ -2371,7 +2544,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     log.info("background work paused for the conversation: %d request(s) stopped", stopped)
                 # "This is the owner" / "This is the loved one", said out loud: that phrase is a fresh room-mic sample of their voice
                 # (the owner, 2026-10-31). Only for people who already have a profile (the loved one's was made with her consent).
-                if speaker and (named := self_named(text, {"owner": cfg.owner_name, "loved_one": cfg.loved_one_name})) \
+                if speaker and not phone_user and (named := self_named(text, {"owner": cfg.owner_name, "loved_one": cfg.loved_one_name})) \
                         and named in speakers.profiles:
                     last = voice["last"]
                     sc = (last or {}).get("scores", {})
@@ -2405,11 +2578,17 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         done(rec, "voice_confirm", speaker)
                         continue
                 now = time.time()
+                heard_how = "voice" if speaker and speaker != "unknown" else ("typed" if not speaker else "unknown")
                 if speaker and speaker != "unknown":                 # recognised: this is who I'm talking with now
                     voice["who"] = {"name": speaker, "at": now}
                 elif speaker == "unknown" and (w := voice["who"]) and now - w["at"] < STICKY_S:
                     speaker, w["at"] = w["name"], now                  # unclear phrase, same conversation: still them
+                    heard_how = "sticky"
                     log.info("voice: unclear, still %s (same conversation)", speaker)
+                if replay_of is None:
+                    edim.user(text, speaker, heard_how)   # EDIM/awareness observe every message (rules, < 1 ms; off = no-op)
+                else:
+                    edim.skip()                           # a replay: no stale note from the previous message
                 if dd_on and replay_of is None and daydream.is_undo_training(text):   # back to the last good model
                     store.add_turn("user", text, speaker)
                     back = await asyncio.to_thread(daydream_train.Versions().undo)
@@ -2544,6 +2723,20 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 # 2026-11-03: "Can you show me the picture?" / a yes to my offer to show it → the photo on screen
                 prev_reply = next((t["content"] for t in reversed(store.recent_turns(2)) if t["role"] == "assistant"), "")
                 showing = time.time() - last_photo.get("shown", 0) < PHOTO_S
+                # 2026-11-05 (the owner): a photo I put up closes by itself when the talk moves to something else
+                if showing and last_photo.pop("keep_once", None):
+                    pass   # a flower I just gave stays for their answer ("Thank you, Echo!")
+                elif showing and not (showphoto.asks_to_close(text, True) or showphoto.asks_to_show(text)):
+                    try:
+                        pend = curiosity.pending() or {}
+                        if showphoto.moved_on(text, showphoto.description(store, last_photo.get("sha")), prev_reply,
+                                              str(pend.get("id", "")).startswith("photo:")):
+                            last_photo.pop("shown", None)
+                            showing = False
+                            await sock.send_json({"type": "photo_close"})
+                            log.info("photo closed: the conversation moved on")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("photo auto-close failed: %s", type(e).__name__)
                 if showphoto.asks_to_close(text, showing) or showphoto.asks_to_show(text) or (
                         browser.is_yes(text) and showphoto.offered(prev_reply)):
                     last = last_photo.get("sha") if time.time() - last_photo.get("at", 0) < PHOTO_S else None
@@ -2551,7 +2744,9 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         last_photo.pop("shown", None)
                         say, expr = "Okay, I've put it away.", "neutral"
                         await sock.send_json({"type": "photo_close"})
-                    elif not (sha := showphoto.pick(text, store, last)):
+                    # "Sure, show it to me" names nothing: the picture is the one I just offered (the owner, 2026-11-10)
+                    elif not (sha := showphoto.pick(text, store, last) or (
+                            showphoto.pick(prev_reply, store, last, tie_ok=True) if showphoto.PHOTO_TALK.search(prev_reply or "") else None)):
                         say, expr = "Which picture would you like to see? Tell me a little about it, like who's in it.", "neutral"
                     else:
                         try:
@@ -2559,7 +2754,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         except Exception:  # noqa: BLE001 (photo drive not connected)
                             ok = False
                         if ok:
-                            last_photo.update(sha=sha, at=time.time(), shown=time.time())
+                            last_photo.update(sha=sha, at=time.time(), shown=time.time(), shown_sha=sha)
                             say, expr = "Here it is.", "smiling"
                             await sock.send_json({"type": "photo", "url": f"/api/photos/view/{sha}.jpg"})
                         else:
@@ -2603,24 +2798,54 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 ask = (None if follow_hint or curiosity.in_thread()
                        or (time.time() < quiet["until"] and not ASK_ME.search(text))   # not right after a command
                        else curiosity.maybe_ask(speaker, text))
+                ask_held = None
+                if ask and not ASK_ME.search(text) and not (held := edim.curiosity_ok())[0]:   # EDIM: not a good moment
+                    log.info("curiosity question held by EDIM: %s", held[1])                  # (asked at a later pause)
+                    ask, ask_held = None, held[1]
+                # 2026-11-05 (the owner): a flower as a gift of appreciation (asked for, or after kindness: once a day)
+                gift = None
+                if not not_done:
+                    try:
+                        if (gift := flowers.decide(speaker, text)):
+                            ask = None   # no life question on top of a gift
+                            if gift.sha:
+                                try:
+                                    if not photos.view_path(gift.sha + ".jpg").exists():
+                                        gift.sha = None
+                                except Exception:  # noqa: BLE001 (photo drive not connected → the emoji)
+                                    gift.sha = None
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("flower gift failed: %s", type(e).__name__)
+                        gift = None
                 # CA 2.0 Phase 7 (core/executive.py): one plan for this message, every decision with its reason.
                 # Memory search: a real follow-up ("what season was it taken in?") is searched with the previous
                 # message (Phase 3); "It's freezing in here" is not a follow-up (11-03: it pulled in bridge photos).
                 xplan, query = executive.plan_turn(text, focus.previous_user(store), rec.plan.get("kind", "chat"),
                                                    rec.plan.get("why"), not_done, cache_state)
-                qvec = await asyncio.to_thread(embedder.query, query) if embedder else None   # ~15 ms
+                qvec = await asyncio.to_thread(embedder.query, query) if embedder and query else None   # ~15 ms
                 cand, check_voice = voice["candidate"], False
                 if (speaker == "unknown" and cand and time.time() - cand["at"] < 60 and not ask and not not_done
                         and not follow_hint
                         and time.time() - voice["asked_at"] >= ASK_EVERY_S and not trainer.busy
                         and time.time() >= voice["confirmed_until"]):
                     check_voice = True
-                messages = build_messages(text, speaker, qvec, browser.NOT_DONE if not_done else
-                                          (follow_hint or (curiosity_hint(ask) if ask else
-                                                           (voice_ask(cfg.owner_name) if check_voice else ""))), query=query)
-                rec.hints = [n for n, on in (("follow", follow_hint), ("ask", ask), ("not_done", not_done),
-                                             ("voice_ask", check_voice), ("referential", query != text)) if on]
+                hint = (browser.NOT_DONE if not_done else
+                        (follow_hint or (curiosity_hint(ask) if ask else (voice_ask(cfg.owner_name) if check_voice else ""))))
+                if gift:
+                    hint = (hint + "\n\n" if hint else "") + gift.hint(speaker)
+                messages = build_messages(text, speaker, qvec, hint, query=query)
+                if gift:   # the flower is on screen as he starts to talk
+                    if gift.sha:
+                        last_photo.update(sha=gift.sha, at=time.time(), shown=time.time(), shown_sha=gift.sha, keep_once=True)
+                        await sock.send_json({"type": "photo", "url": f"/api/photos/view/{gift.sha}.jpg", "caption": gift.card()})
+                    flowers.given(gift, shown=bool(gift.sha))
+                    log.info("flower given to %s (%s, %s)", gift.who, "asked" if gift.asked else "appreciation",
+                             "photo" if gift.sha else "emoji")
+                rec.hints = [n for n, on in (("follow", follow_hint), ("ask", ask), ("not_done", not_done), ("flower", gift),
+                                             ("voice_ask", check_voice), ("referential", query not in (text, "")),
+                                             ("ask_held", ask_held)) if on]
                 rec.memory_ids, rec.recall_ms = list(recall_info.get("ids", [])), recall_info.get("ms")
+                turn_photo, asked_photo = None, False
                 try:   # 2026-11-03: the photo this turn is about, for a later "show me the picture"
                     if ask and str(ask.get("id", "")).startswith("photo:") and ask.get("memory_id"):
                         row = store.db.execute("SELECT source FROM memories WHERE id = ?", (ask["memory_id"],)).fetchone()
@@ -2629,6 +2854,8 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         ps = showphoto.top_photo(getattr(recall_info.get("res"), "hits", None))
                     if ps:
                         last_photo.update(sha=ps, at=time.time())
+                        turn_photo = ps
+                        asked_photo = bool(ask and str(ask.get("id", "")).startswith("photo:"))
                 except Exception as e:  # noqa: BLE001
                     log.warning("photo tracking failed: %s", type(e).__name__)
                 rec.meaning_search = (qvec is not None) if embedder else None
@@ -2668,6 +2895,11 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         messages[-1]["content"] += "\n\n" + snote
                         rec.hints.append("social_note")
                         xplan.fired("social")
+                # EDIM (Phase 3): the conversation note, only in mode "on" (shadow/off: nothing is added)
+                if (enote := edim.note()) and xplan.may("dialogue"):
+                    messages[-1]["content"] += "\n\n" + enote
+                    rec.hints.append("dialogue_note")
+                    xplan.fired("dialogue")
                 # CA 2.0 Phase 8: the owner's own lessons about how to answer news/stories, next to the message (core/development.py)
                 # (not when a social note fired: grief/physical needs come first — 11-03 eval_social: with both notes,
                 #  "I'm fine, really" after a loss got "I'm glad to hear you're doing okay" 2/2)
@@ -2691,6 +2923,32 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                         xplan.fired("self_model")
                     except Exception as e:  # noqa: BLE001
                         log.warning("self note failed: %s", type(e).__name__)
+                if seen:   # Show Echo: the pictures go with this one message only (not kept in history or memory)
+                    messages[-1]["images"] = seen["images"]
+                    messages[-1]["content"] += "\n\n" + camera_note(seen, speaker)
+                    rec.hints.append("camera")
+                if task:
+                    messages[-1]["content"] += "\n\n" + task_note(task, phone_user)
+                    rec.hints.append("task_" + task["kind"])
+                # Errands (the owner's device): Echo prepares them, the owner approves each with one tap; money never spent
+                elif phone_user == "owner" and (errands.looks_like_errand(text) or errands.wants_money(text)):
+                    try:
+                        items = await errands.extract(backend, text) if errands.looks_like_errand(text) else []
+                        if items:
+                            await sock.send_json({"type": "errands", "items": items})
+                        # always: he can text and call (even when nothing could be prepared from this one)
+                        messages[-1]["content"] += "\n\n" + errands.errand_note(items, errands.wants_money(text), phone_user)
+                        rec.hints.append("errands")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("errands failed: %s", type(e).__name__)
+                if doc_ask:
+                    try:
+                        found = DOCS.relevant(phone_user, doc_ask, text)
+                        if found:
+                            messages[-1]["content"] += "\n\n" + doc_note(found[0], found[1], __import__("echolink.owner", fromlist=["display"]).display(phone_user))
+                            rec.hints.append("document")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("document note failed: %s", type(e).__name__)
                 # UCA2 Phase 2: the live workspace for this turn (ids/labels only)
                 ecw = cws.LiveState()
                 ecw.publish("message", current_goal=rec.plan.get("kind"), active_systems=rec.plan.get("needs", []),
@@ -2705,7 +2963,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 # 2026-11-03: "what do you see on the weather channel?" → read the page I opened (as Chrome shows it)
                 page_q = None if not_done else browser.page_to_read(text, last_opened)
                 if tools_on and tset["enabled"] and hasattr(backend, "chat_stream_tools") and (
-                        tools.wants_tools(text) or page_q):
+                        (tools.wants_tools(text) and not (phone_user and controller.phone_request(text))) or page_q):
                     turn = tools.Turn(research=tools.wants_research(text), follow=tset["follow_links"],
                                       max_pages=tset["max_pages"])
                     turn.allow(text, *[t["content"] for t in store.recent_turns(6)])
@@ -2723,12 +2981,15 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     # their name only now and then: allowed if none of the last 5 replies used it
                     recent = [t["content"] for t in store.recent_turns(10) if t["role"] == "assistant"][-5:]
                     name = cfg.loved_one_name.strip()
+                    own = {cfg.owner_name.strip().lower(), "owner"} - {""}
                     parser = StreamParser(trim_opener=xplan.may("style_filter"),   # Phase 8: the owner's lesson
                                           opener_names=people_names(),
-                                          allow_name=not name or not any(name.lower() in r.lower() for r in recent),
+                                          allow_name=(gift is not None and gift.who == "loved_one")   # "<name>, this one's for you"
+                                          or not name or not any(name.lower() in r.lower() for r in recent),
                                           name=name,
                                           block_names=[n for n in social.blocked_names(speaker, cfg)   # my own "Is that
-                                                       if not (check_voice and n == cfg.owner_name)])   # you, <name>?" stays
+                                                       if not (check_voice and n == cfg.owner_name)   # you, <name>?" stays
+                                                       and not (gift and n.lower() in (own if gift.who == "owner" else {name.lower()}))])
                     parser.ask(text)   # "blink for me" / "smile for me" happen even if the model forgets
                     t_start, t_first = time.perf_counter(), None
                     pre = (tools.prefetch_calls(text) if turn else []) or ([{"function": {"name": "read_webpage", "arguments": {
@@ -2760,6 +3021,7 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                     cited = "\n\nSources: " + "; ".join(f"{s['title']} ({s['url']})" for s in seen)
                     await sock.send_json({"type": "sources", "sources": list(seen)})
                 store.add_turn("assistant", reply.text + cited)
+                edim.reply(reply.text)
                 # quiet-time jobs wait until the reply has been SPOKEN, not just written: the voice is still talking for
                 # about len/14 s after the text is done, and a background LLM job then makes the voice hitch (2026-11-02)
                 last_turn["at"] = time.time() + speech_seconds(reply.text)
@@ -2779,6 +3041,26 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                 fid = trainer.record(text, reply.text, speaker, replay_of)   # testing on: logged for 👍/👎
                 await sock.send_json({"type": "reply", **reply.model_dump(), **({"fid": fid} if fid else {}),
                                       **({"replay_of": replay_of} if replay_of else {})})
+                # 2026-11-05 (the owner): when I talk about a photo, it goes on screen so he can see what I mean
+                try:
+                    if (turn_photo and not gift and not (time.time() - last_photo.get("shown", 0) < PHOTO_S
+                                            and last_photo.get("shown_sha") == turn_photo)
+                            and showphoto.reply_shows(reply.text, showphoto.description(store, turn_photo), asked_photo)
+                            and photos.view_path(turn_photo + ".jpg").exists()):
+                        last_photo.update(sha=turn_photo, at=time.time(), shown=time.time(), shown_sha=turn_photo)
+                        await sock.send_json({"type": "photo", "url": f"/api/photos/view/{turn_photo}.jpg"})
+                        rec.hints.append("photo_shown")
+                    # the owner asked to see one ("show it to me") and my answer names it ("how about the photo of you and
+                    # Daisy from January?"): show that one now instead of only offering it (2026-11-10)
+                    elif (showphoto.asks_to_show(text) or browser.is_yes(text) or re.search(r"\bshow\b", text, re.I)) \
+                            and not showphoto._BRUCE_SHOWS.search(text) and showphoto.PHOTO_TALK.search(reply.text) \
+                            and (sha := showphoto.pick(reply.text, store, last_photo.get("sha"), tie_ok=True)) \
+                            and photos.view_path(sha + ".jpg").exists():
+                        last_photo.update(sha=sha, at=time.time(), shown=time.time(), shown_sha=sha)
+                        await sock.send_json({"type": "photo", "url": f"/api/photos/view/{sha}.jpg"})
+                        rec.hints.append("photo_shown")
+                except Exception as e:  # noqa: BLE001 (photo drive not connected: just talk)
+                    log.warning("photo auto-show failed: %s", type(e).__name__)
                 # 2026-11-02: an offer or announcement in my reply ("would you like to go to The Weather Channel?",
                 # "I will open YouTube and play Do It Again") becomes real: kept for a "yes", or done now if I said I'm
                 # doing it right after they said yes. Only things browser/music can really open or play.
@@ -2806,6 +3088,26 @@ def create_app(cfg: PersonaConfig | None = None, backend: LLMBackend | None = No
                             active_context={"speaker": speaker or "typed", "route": "llm_tools" if turn else "llm"})
                 rec.ecw = ecw.snapshot()
                 rec.exec = xplan.as_record()
+                if phone_user and turn is not None and getattr(turn, "hits", None):
+                    try:   # the phone's side window: the websites this answer came from
+                        await sock.send_json({"type": "panel", "kind": "web", "title": "Where this came from",
+                                              "items": [{"title": h.title[:120], "url": h.url, "snippet": h.snippet[:240]}
+                                                        for h in turn.hits[:6]]})
+                    except Exception:  # noqa: BLE001
+                        pass
+                elif phone_user and side_window_question(text):
+                    try:   # answered without looking anything up: earlier sources on this, or a quick search
+                        items = recent_sources(text, store.recent_turns(12))
+                        title = "Where this came from"
+                        if not items:
+                            from core import search as web_search
+                            hits = await asyncio.to_thread(web_search.search, text, 5)
+                            items = [{"title": h.title[:120], "url": h.url, "snippet": h.snippet[:240]} for h in hits]
+                            title = "More about this"
+                        if items:
+                            await sock.send_json({"type": "panel", "kind": "web", "title": title, "items": items[:6]})
+                    except Exception as e:  # noqa: BLE001
+                        log.info("side window skipped: %s", type(e).__name__)
                 try:   # Stage 5a: a question I couldn't answer → a proposed learning objective (recorded only)
                     if (gk := mem_gaps.detect(rec.plan.get("kind"), rec.grounding.get("label"), reply.text, text)):
                         learning.note(gk, text, speaker)

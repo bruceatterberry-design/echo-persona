@@ -34,3 +34,6 @@ config/claude.json
 *.apk
 backups/
 .venv-train/
+config/home.json
+config/echo_calls.json
+!echo-android/app/src/main/res/**/*.png
