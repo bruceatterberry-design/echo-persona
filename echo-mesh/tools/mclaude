@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""mclaude: start Claude Code in the terminal with your Echo Mesh as extra hands. Three cases, decided every time you start it:
+
+  Claude OK  + Mesh OK   -> Claude Code starts with the mesh tools added (mesh_try_patch, mesh_fanout, mesh_ask_all, mesh_status):
+                            parallel, test-verified attempts and bulk drafting run on your computers while Claude does the thinking
+  Claude OK  + Mesh down -> plain Claude Code, exactly as if the mesh did not exist
+  Claude down + Mesh OK  -> the mesh takes over: a small coding prompt (mesh>) that writes attempts in parallel, tries them against your tests,
+                            and shows the diff and the speed. Nothing is written to your project until you type /apply.
+  both down              -> says so and stops.
+
+  mclaude                      start (anything else you type is passed on to claude, e.g.  mclaude --resume)
+  mclaude --probe              just show what it found and what it would do
+  mclaude --tests "pytest -q"  the test command the mesh uses to judge attempts (or put {"tests": "..."} in ./.mclaude.json)
+  mclaude --no-mesh            Claude alone this time       |  mclaude --mesh-only   the mesh prompt even though Claude is up
+  MCLAUDE=off claude           (once mclaude is your default) skip all of this for one start
+
+The mesh only ever receives text and never runs anything: your tests run on this Mac, in scratch copies. Mesh answers are drafts from small models.
+"""
+import json, os, shlex, shutil, socket, subprocess, sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+
+SYSTEM_PROMPT = """The user's Echo Mesh is connected: small local AI models (3b/7b) on several of their own computers, available as mcp__mesh__* tools. Use them to work faster, never to think for you.
+- mesh_try_patch: for ONE small, well-specified change (a function, or a few small files) that the project's tests cover. Several computers write attempts in parallel, each is tried in a scratch copy, and the tests pick a passing one. You get a diff back; NOTHING real is changed, so read it and apply it yourself. Call it for several independent pieces in the same message so they run side by side, and keep working while you wait. If it says it did not find a passing change, just do the work yourself.
+- mesh_fanout: one prompt template over many items in parallel: docstrings, short summaries, test-case ideas, boilerplate, rename suggestions.
+- mesh_ask_all: quick second opinions. Often confidently wrong; never for correctness or security.
+- mesh_status: who is online.
+Rules: everything from the mesh is a DRAFT; check it before it goes in. Do not use it for code review, security, architecture or anything touching secrets. If a mesh tool says it is unavailable, carry on alone and do not mention it again."""
+
+
+def probe_claude():
+    """-> (ok, why). Local checks only plus a 3-second look at the network; a usage limit can only be seen when it happens."""
+    path = shutil.which("claude")
+    if not path:
+        return False, "the claude command is not installed"
+    try:
+        socket.create_connection(("api.anthropic.com", 443), 3).close()
+    except OSError:
+        return False, "cannot reach api.anthropic.com (offline, or an outage)"
+    try:
+        r = subprocess.run([path, "auth", "status"], capture_output=True, text=True, timeout=10)
+        if r.returncode != 0 or '"loggedIn": false' in r.stdout:
+            return False, "Claude is not signed in (run: claude auth login)"
+    except (OSError, subprocess.TimeoutExpired):
+        pass                                                   # could not check: assume fine, let claude say if it is not
+    return True, ""
+
+
+def probe_mesh():
+    import meshmcp
+    on, why = meshmcp.mesh_up()
+    models = sorted({m for n in on for m in meshmcp.models_of(n)})
+    return bool(on), (f"{len(on)} computer(s) online ({', '.join(m.split(':')[0] + ':' + m.split(':')[1] for m in models if m.startswith('qwen2.5-coder'))})" if on else why or "no computer is online")
+
+
+def decide(claude_ok, mesh_ok, no_mesh=False, mesh_only=False):
+    """The whole policy in one place."""
+    if mesh_only:
+        return "mesh" if mesh_ok else "none"
+    if claude_ok and mesh_ok and not no_mesh:
+        return "claude+mesh"
+    if claude_ok:
+        return "claude"
+    return "mesh" if mesh_ok and not no_mesh else "none"
+
+
+def project_tests(cwd, cli_tests):
+    if cli_tests:
+        return cli_tests
+    try:
+        return json.load(open(os.path.join(cwd, ".mclaude.json"))).get("tests") or None
+    except (OSError, ValueError):
+        return None
+
+
+def venv_python():
+    p = os.environ.get("MCLAUDE_PYTHON", "")           # a Python that has pytest (plain python3 often does not); set it once if you want one
+    return p if p and os.path.exists(p) else sys.executable
+
+
+def write_mcp_config(cwd, tests):
+    env = {"MESHMCP_ROOT": cwd}
+    if tests:
+        env["MESHMCP_TESTS"] = tests
+    cfg = {"mcpServers": {"mesh": {"command": venv_python(), "args": [os.path.join(HERE, "meshmcp.py")], "env": env}}}
+    d = os.path.expanduser("~/.echo-mesh"); os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, "mclaude-mcp.json")
+    json.dump(cfg, open(p, "w"))
+    return p
+
+
+def mesh_repl(cwd, tests):
+    """Claude is not available: a small coding prompt run entirely by the mesh."""
+    import meshcode as M
+    state = {"files": [], "split": False, "tests": tests, "last": None}
+    print("Mesh coder. Type a task. /files a.py b.py  /tests <command>  /split on|off  /apply  /help  /quit")
+    print("(With no /files, the mesh plans which files to change by itself.)\n")
+    while True:
+        try:
+            line = input("mesh> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(); return
+        if not line:
+            continue
+        if line in ("/quit", "/exit", "/q"):
+            return
+        if line == "/help":
+            print("Type what you want built or changed. The mesh writes attempts in parallel, your tests pick, you see the diff, /apply writes it."); continue
+        if line.startswith("/files"):
+            state["files"] = line.split()[1:]; print("files:", state["files"] or "(the mesh will plan them)"); continue
+        if line.startswith("/tests"):
+            state["tests"] = line[6:].strip() or None; print("tests:", state["tests"] or "default pytest"); continue
+        if line.startswith("/split"):
+            state["split"] = line.endswith("on"); print("spread across files:", state["split"]); continue
+        if line == "/apply":
+            r = state["last"]
+            if not r or not r["ok"]:
+                print("Nothing to apply."); continue
+            for f, t in r["files"].items():
+                fp = os.path.join(cwd, f); os.makedirs(os.path.dirname(fp) or ".", exist_ok=True)
+                if os.path.exists(fp) and open(fp, encoding="utf-8").read() == t:
+                    continue
+                open(fp, "w", encoding="utf-8").write(t)
+            print("Applied:", ", ".join(r["files"])); state["last"] = None; continue
+        if line.startswith("/"):
+            print("Unknown command. /help"); continue
+        a = M.make_opts(task=line, files=state["files"], tests=state["tests"], backend="mesh", split=state["split"] or not state["files"])
+        res = M.run_task(a, cwd, print)
+        state["last"] = res
+        print()
+        if res["ok"]:
+            print(res["diff"]); print(f"\n{res['note']}"); M.print_speed(res["speed"]); print("\nType /apply to write it into your project.\n")
+        else:
+            print("No passing change found: " + res["note"] + "\n")
+
+
+def main():
+    vp = venv_python()
+    if os.path.realpath(sys.executable) != os.path.realpath(vp) and not os.environ.get("MCLAUDE_REEXEC"):
+        os.environ["MCLAUDE_REEXEC"] = "1"                      # run under the Python that has pytest, so the default test command works
+        os.execv(vp, [vp, os.path.realpath(__file__)] + sys.argv[1:])
+    args = sys.argv[1:]
+    flags = {"--probe": False, "--no-mesh": False, "--mesh-only": False}
+    tests = None
+    rest = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in flags:
+            flags[a] = True
+        elif a == "--tests" and i + 1 < len(args):
+            tests = args[i + 1]; i += 1
+        else:
+            rest.append(a)
+        i += 1
+    cwd = os.getcwd()
+    tests = project_tests(cwd, tests)
+    c_ok, c_why = probe_claude()
+    m_ok, m_why = probe_mesh()
+    mode = decide(c_ok, m_ok, flags["--no-mesh"], flags["--mesh-only"])
+    line = (f"mclaude: Claude {'OK' if c_ok else 'DOWN (' + c_why + ')'}   Mesh {'OK, ' + m_why if m_ok else 'down (' + m_why + ')'}   ->   " +
+            {"claude+mesh": "Claude with the mesh helping", "claude": "Claude alone", "mesh": "the mesh takes over", "none": "nothing is available"}[mode])
+    print(line, file=sys.stderr)
+    if flags["--probe"]:
+        print(mode); return 0
+    if mode == "none":
+        print("Neither Claude nor the mesh is available. Check your network, then try again.", file=sys.stderr); return 1
+    if mode == "mesh":
+        mesh_repl(cwd, tests); return 0
+    claude = shutil.which("claude")
+    if mode == "claude":
+        os.execv(claude, [claude] + rest)
+    cfg = write_mcp_config(cwd, tests)
+    # your own arguments go FIRST: --allowedTools takes a list and would swallow a prompt that came after it
+    os.execv(claude, [claude] + rest + ["--mcp-config", cfg, "--append-system-prompt", SYSTEM_PROMPT,
+                                        "--allowedTools", "mcp__mesh__mesh_status,mcp__mesh__mesh_try_patch,mcp__mesh__mesh_fanout,mcp__mesh__mesh_ask_all"])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

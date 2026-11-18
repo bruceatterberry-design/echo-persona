@@ -23,6 +23,7 @@ if you switch it on; see Privacy.
 - **Remembers:** say "remember that …" or use the memory panel. Nothing is saved without being asked.
 - **Talks like you:** the "How I talk" page proposes personality traits from your own recorded answers, each backed by a
   quote; only the ones you approve are used.
+- **Echo Mesh (new in 1.2.0):** spare computers at home work as a private team for Echo: faster side-requests, and Claude Code and the Mesh racing to write code (see below).
 - **Opens and reads web pages:** "Hey Echo, open the Weather Channel", "what does example.com say?", "look up when the
   Eiffel Tower was built", "research … and follow the links". Echo reads pages itself and lists its sources.
 - **Music:** "open YouTube and play some blues"; Echo listens along (tempo, energy, the words it can make out) and
@@ -30,10 +31,59 @@ if you switch it on; see Privacy.
 - **Android Collector app (optional):** guided daily sessions that record your voice and face video on your phone, and
   copy to the Mac over a USB cable only (the app has no internet permission).
 
+> **🕸️ 1.2.0: Echo Mesh.** Your spare computers work as Echo's team; see [What's new in 1.2.0](#whats-new-in-120--echo-mesh).
+>
 > **📱 1.1.0: Echo in your hand.** New Android app; see below.
 >
 > **🎉 Out of beta: 1.0.0.** Echo Persona is complete and covered by 902 automated tests. It has so far been
 > used on one Mac, so keep backups of your recordings (`scripts/backup_dataset.sh`) and please report problems.
+
+## What's new in 1.2.0 🕸️ Echo Mesh
+
+<p align="center"><img src="docs/report/echo-mesh-1.2.0.svg" width="100%" alt="Echo Mesh: a Mac mini hub connected to a laptop, a tower PC, a living-room PC and Claude Code"></p>
+
+**Echo now has a team.** The laptop in the drawer, the tower in the corner and the PC in the living room can work for
+Echo as a private, invite-only **Mesh**: small jobs fan out to all of them at once, Claude Code and your own computers
+**race** to write your code, and if one side is down the other keeps going. The Mesh carries **text only**: never
+memories, recordings or photos, and it never runs a command on any computer.
+
+| | Mac alone | **With the Mesh** |
+|---|---|---|
+| Echo's maths-and-logic check, one question | 4.2 s | **1.1 s** (3.8× faster) |
+| Twenty questions in a row | 84 s | **28 s** |
+| Same 20 questions, accuracy | 12/12 sums, 6/8 logic | **12/12 sums, 8/8 logic** |
+| A small code change that passes its tests | Claude 6 s | Mesh 15 s, 6 of 6 attempts passed |
+
+📊 **[See every chart in the PDF](docs/report/Echo-Mesh-Performance.pdf)** · 📖 **[The whole story: docs/ECHO_MESH.md](docs/ECHO_MESH.md)**
+
+<p align="center"><img src="docs/report/mesh-inference.png" width="100%" alt="Charts: time for one question, time for 20 questions, logic questions answered right, one call on an idle mesh"></p>
+
+### 🧠 Echo leans on the Mesh for inference
+Echo's chat stays on your Mac, with its 9B model, its warm cache and its memories. But his **side-requests** (the first one
+moved is the maths-and-logic check that Lean 4 verifies) go to a computer on the Mesh, **one at a time**. If the Mesh is
+down, slow or answers nonsense, **the Mac does it exactly as before**. Names, school and contact details never leave the
+Mac, the Mesh's reply is only ever parsed as text, and Echo gets a *limited* token that can send text jobs and nothing else.
+
+### 💻 Code faster with Claude Code + the Mesh
+A new launcher, **`mclaude`**, checks both sides every time you start Claude Code: **Claude + Mesh** gives Claude four extra
+tools to hand small, tested jobs to your computers; **Mesh down** is plain Claude; **Claude down or out of usage** and the
+**Mesh takes over** with its own coding prompt. In **race mode** both start at once and **the first result that passes
+your tests wins**. In **spread mode** one big task is split across several files, each written in parallel, with the test
+count pulling them into line. *Your tests are the judge, and nothing in your real folder changes until you apply a diff.*
+
+<p align="center"><img src="docs/report/mesh-coding.png" width="100%" alt="Charts: time to a passing change, several attempts at once, speed per machine, spreading one task over three files"></p>
+
+### 🔧 Fixed in this build
+- **Windows agent didn't start at login:** a folder created from an administrator shell was locked to everyone else; folders now
+  inherit the user's permissions and an unreadable identity file says why.
+- **Agents keep a timestamped log** (never a secret).
+- **Failing tests miscounted** (plugin warnings hid the real count) and models didn't see the tests (18/18 failed before, passes now).
+- **Runaway code can't hang a run:** test processes are killed with their children after 60 seconds.
+- **The closest failed attempt is kept** as a head start; **tool calls run side by side**; Echo's side-request **falls back to the Mac** on any problem.
+
+> [!NOTE]
+> **Honest numbers.** Small samples (20 questions, 3 coding tasks). For a small coding task **Claude alone was faster**; the
+> Mesh's wins are throughput, Echo's side-requests and never being stuck. The code is in [`echo-mesh/`](echo-mesh/).
 
 ## What's new in 1.1.0 📱 Echo in your hand
 

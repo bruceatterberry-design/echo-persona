@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img"
+ aria-label="Echo Mesh: a hub computer in the middle connected to a laptop, a tower PC, a living-room PC and Claude Code, with the headline numbers: 3.8 times faster per question, three worker computers sharing a job, Claude and the mesh racing to code">
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0b0820"/><stop offset=".55" stop-color="#140f3a"/><stop offset="1" stop-color="#0a1033"/></linearGradient>
+ <linearGradient id="title" x1="0" x2="1"><stop offset="0" stop-color="#93c5fd"/><stop offset=".5" stop-color="#c4b5fd"/><stop offset="1" stop-color="#818cf8"/></linearGradient>
+ <radialGradient id="hub" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#93c5fd"/><stop offset=".45" stop-color="#7c3aed"/><stop offset="1" stop-color="#312e81"/></radialGradient>
+ <radialGradient id="node" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#bfdbfe"/><stop offset=".6" stop-color="#4f7cf0"/><stop offset="1" stop-color="#1e3a8a"/></radialGradient>
+ <radialGradient id="claude" cx=".4" cy=".35" r=".8"><stop offset="0" stop-color="#fed7aa"/><stop offset=".6" stop-color="#eb6834"/><stop offset="1" stop-color="#7c2d12"/></radialGradient>
+ <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="10"/></filter>
+</defs>
+<rect width="1280" height="560" fill="url(#bg)"/>
+<g stroke-linecap="round" fill="none">
+ <g stroke="#7c9cff" stroke-width="3" opacity=".9"><path d="M930 285 L1150 150"/><path d="M930 285 L1170 420"/><path d="M930 285 L720 440"/></g>
+ <path d="M930 285 L760 120" stroke="#fb923c" stroke-width="3" stroke-dasharray="3 9" opacity=".95"/>
+ <g stroke="#7c9cff" stroke-width="1.5" opacity=".35"><path d="M1150 150 L1170 420"/><path d="M1170 420 L720 440"/><path d="M720 440 L760 120"/><path d="M760 120 L1150 150"/></g>
+</g>
+<circle cx="930" cy="285" r="78" fill="#7c3aed" filter="url(#glow)" opacity=".55"/>
+<circle cx="930" cy="285" r="58" fill="url(#hub)"/>
+<text x="930" y="281" text-anchor="middle" font-size="19" font-weight="700" fill="#fff">Mac mini</text><text x="930" y="302" text-anchor="middle" font-size="14" fill="#e0e7ff">Echo + hub</text>
+<g>
+ <circle cx="1150" cy="150" r="46" fill="#4f7cf0" filter="url(#glow)" opacity=".5"/><circle cx="1150" cy="150" r="38" fill="url(#node)"/><text x="1150" y="155" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Laptop</text>
+ <circle cx="1170" cy="420" r="46" fill="#4f7cf0" filter="url(#glow)" opacity=".5"/><circle cx="1170" cy="420" r="38" fill="url(#node)"/><text x="1170" y="425" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">Tower</text>
+ <circle cx="720" cy="440" r="46" fill="#4f7cf0" filter="url(#glow)" opacity=".5"/><circle cx="720" cy="440" r="38" fill="url(#node)"/><text x="720" y="437" text-anchor="middle" font-size="13.5" font-weight="700" fill="#fff">Living-</text><text x="720" y="453" text-anchor="middle" font-size="13.5" font-weight="700" fill="#fff">room PC</text>
+ <circle cx="760" cy="120" r="46" fill="#eb6834" filter="url(#glow)" opacity=".5"/><circle cx="760" cy="120" r="38" fill="url(#claude)"/><text x="760" y="117" text-anchor="middle" font-size="13.5" font-weight="700" fill="#fff">Claude</text><text x="760" y="133" text-anchor="middle" font-size="13.5" font-weight="700" fill="#fff">Code</text>
+</g>
+<text x="60" y="150" font-size="30" font-weight="600" fill="#c4b5fd" letter-spacing="6">ECHO PERSONA 1.2</text>
+<text x="56" y="236" font-size="104" font-weight="800" fill="url(#title)" letter-spacing="-2">Echo Mesh</text>
+<text x="60" y="290" font-size="30" fill="#e0e7ff">Your computers, working as one.</text>
+<g font-size="21" fill="#dbeafe">
+ <text x="60" y="360"><tspan font-weight="800" fill="#93c5fd" font-size="30">3.8×</tspan>  faster maths-and-logic checks for Echo</text>
+ <text x="60" y="405"><tspan font-weight="800" fill="#c4b5fd" font-size="30">3 ⇄ 1</tspan>  worker computers share a job, in parallel</text>
+ <text x="60" y="450"><tspan font-weight="800" fill="#fdba74" font-size="30">Race</tspan>  Claude and the mesh code side by side</text>
+</g>
+<text x="60" y="510" font-size="15" fill="#94a3b8">Measured 18 November 2026 on a home network. Private text stays home. The mesh only ever carries text.</text>
+</svg>

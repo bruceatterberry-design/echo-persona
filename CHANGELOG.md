@@ -2,6 +2,24 @@
 
 Echo Persona 1.0.0 is out of beta. Keep backups of your data.
 
+## 1.2.0: Echo Mesh (2026-11-18)
+
+- **Echo Mesh** (`echo-mesh/`): a private, invite-only network of your own computers (coordinator, node agent, Windows tray program,
+  Linux installer, message boards, signed brain updates). Text only; it never runs commands. See `docs/ECHO_MESH.md`.
+- **Echo leans on the Mesh for inference:** a side-request is answered by a Mesh computer, one at a time, with the Mac as
+  an always-ready fallback (`echo-mesh/integrations/echo/`). Measured: 4.2 s → 1.1 s per question, 84 s → 28 s for twenty,
+  same accuracy. Private text never leaves the Mac. A limited client token can only send text jobs and read its answers.
+- **Code with Claude Code + the Mesh:** `mclaude` (Claude with Mesh tools; plain Claude if the Mesh is down; the Mesh takes
+  over if Claude is down), `meshcode` race mode (first result that passes your tests wins, with a speed report) and spread
+  mode (`--split`, one task over several files), `meshmcp` (`mesh_try_patch`, `mesh_fanout`, `mesh_ask_all`, `mesh_status`),
+  `ask_all`, `fanout`.
+- **Charts:** `docs/report/Echo-Mesh-Performance.pdf`.
+- **Fixed:** Windows agent not starting at login (folder permissions); unreadable identity now reports its cause; agents log
+  timestamped events; failing tests miscounted; a model's endless loop could hang a run (process groups are now killed);
+  models could not see the tests; a failed run lost its closest attempt; the tool server answers calls in flight; board
+  posts lost line breaks.
+- `pyproject.toml` now sets `testpaths = ["tests"]` so Echo's own test run does not pick up the Mesh's separate suite.
+
 ## 1.1.0: Echo in your hand (2026-11-10)
 
 - **Echo Android app** (`echo-android/`, APK on the Releases page): link by Wi-Fi discovery or QR code (pinned TLS,

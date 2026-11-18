@@ -10,6 +10,7 @@ models/
 *.jpg
 *.jpeg
 *.png
+!docs/report/mesh-*.png
 *.heic
 *.sqlite
 *.db

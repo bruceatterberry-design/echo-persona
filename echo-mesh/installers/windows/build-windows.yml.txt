@@ -1,0 +1,34 @@
+name: Build Windows app
+on:
+  workflow_dispatch:
+  push:
+    paths: ["mesh/**", "installers/windows/**", ".github/workflows/build-windows.yml"]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: pip install pyinstaller==6.10.0 pystray==0.19.5 pillow==10.4.0
+      - name: Run the tests that work without a screen
+        run: python -m unittest tests.test_winapp_core tests.test_governor tests.test_join
+      - name: Build EchoMesh-Setup.exe
+        run: pyinstaller --onefile --windowed --name EchoMesh-Setup --paths . --hidden-import pystray._win32 installers/windows/launcher.py
+      - name: Self-test the built program
+        shell: pwsh
+        run: |
+          Start-Process -FilePath dist\EchoMesh-Setup.exe -ArgumentList '--check','check.txt' -Wait
+          Get-Content check.txt
+          if ((Get-Content check.txt -Raw) -match 'MISSING|FAILED') { exit 1 }
+      - name: Checksum
+        shell: pwsh
+        run: (Get-FileHash dist\EchoMesh-Setup.exe -Algorithm SHA256).Hash | Out-File dist\EchoMesh-Setup.exe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EchoMesh-Setup
+          path: |
+            dist/EchoMesh-Setup.exe
+            dist/EchoMesh-Setup.exe.sha256
